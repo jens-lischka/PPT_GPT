@@ -9,6 +9,10 @@ paths. Output: dist/taskpane.html.
 The only external dependency left is office.js from Microsoft's CDN, which
 Office itself requires and always allows.
 
+Writes two copies of the same file:
+  - addin/dist/taskpane.html  (generic hostable artifact)
+  - docs/index.html           (served by GitHub Pages at the repo root URL)
+
     python3 build_standalone.py
 """
 from __future__ import annotations
@@ -19,6 +23,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 ASSETS = HERE / "src" / "assets"
 DIST = HERE / "dist"
+DOCS = HERE.parent / "docs"
 
 SPIKE_B64 = (ASSETS / "spike_deck.b64").read_text().strip()
 BRIEF = json.loads((ASSETS / "board_recommendation.json").read_text())
@@ -103,7 +108,14 @@ HTML = """<!DOCTYPE html>
 </html>
 """
 
+rendered = HTML.format(spike_b64=SPIKE_B64)
+
 DIST.mkdir(exist_ok=True)
-out = DIST / "taskpane.html"
-out.write_text(HTML.format(spike_b64=SPIKE_B64))
-print(f"wrote {out} ({out.stat().st_size} bytes)")
+DOCS.mkdir(exist_ok=True)
+for out in (DIST / "taskpane.html", DOCS / "index.html"):
+    out.write_text(rendered)
+    print(f"wrote {out} ({out.stat().st_size} bytes)")
+
+# .nojekyll stops GitHub Pages' Jekyll pass from touching the static files.
+(DOCS / ".nojekyll").write_text("")
+print(f"wrote {DOCS / '.nojekyll'}")
