@@ -43,7 +43,27 @@ uvicorn main:app --port 8123 &             # then POST testdata/*.json to /rende
 curl localhost:8123/healthz               # {"ok":true,"runtime_version":"2.6.18"}
 ```
 
-## B. PowerPoint verification — MANUAL (needs your Windows/Mac M365)
+## B. PowerPoint verification — PASSED ✅ (2026-07-08, PowerPoint on the web, M365)
+
+Verified in real PowerPoint. **Verdict: green light for the architecture.**
+
+- **Q1 — Fidelity: PASS.** All 5 slides render intact after
+  `insertSlidesFromBase64` — treemap, icon freeforms, native table, waterfall
+  (bars + connectors), and de-DE `1.000`-style numbers all correct.
+- **Q2 — Master hygiene: PASS.** After 3× insert there is still only **one**
+  master/layout set — no duplication. `useDestinationTheme` maps the inserted
+  layouts cleanly onto the open presentation's master.
+
+Sideload path that worked on a locked-down (non-admin) corporate Mac: the
+self-contained pane hosted on **GitHub Pages** (`docs/index.html`,
+`https://<user>.github.io/<repo>/`), manifest `manifest.hosted.xml` uploaded
+via **PowerPoint on the web → Insert → Add-ins → Upload My Add-in**. No
+localhost, no dev certificate, no admin rights. The localhost dev flow
+(`npm run sideload`) is a non-starter without admin to trust the dev cert.
+
+The steps below are retained for reference / re-running the spike.
+
+### Reproduce (steps)
 
 This half cannot run in the headless build environment. Steps:
 
