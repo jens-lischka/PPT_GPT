@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<OfficeApp xmlns="http://schemas.microsoft.com/office/appforoffice/1.1"
+           xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+           xmlns:bt="http://schemas.microsoft.com/office/officeappbasictypes/1.0"
+           xsi:type="TaskPaneApp">
+  <Id>7f9e2c3a-1b4d-4e5f-9a8b-0c1d2e3f4a60</Id>
+  <Version>0.2.0</Version>
+  <ProviderName>OW Deck Builder</ProviderName>
+  <DefaultLocale>en-US</DefaultLocale>
+  <DisplayName DefaultValue="OW Deck Builder"/>
+  <Description DefaultValue="Generate OW-branded decks and edit the selected slide from a task pane."/>
+  <Hosts>
+    <Host Name="Presentation"/>
+  </Hosts>
+  <Requirements>
+    <Sets DefaultMinVersion="1.1">
+      <!-- insertSlidesFromBase64 needs 1.2; selection/tags/replace need 1.5.
+           Minimum kept LOW; the pane feature-detects 1.5 at runtime. -->
+      <Set Name="PowerPointApi" MinVersion="1.1"/>
+    </Sets>
+  </Requirements>
+  <DefaultSettings>
+    <!-- Hosted on GitHub Pages (public repo). Backend URL is set in the pane. -->
+    <SourceLocation DefaultValue="https://jens-lischka.github.io/PPT_GPT/app.html"/>
+  </DefaultSettings>
+  <Permissions>ReadWriteDocument</Permissions>
+</OfficeApp>

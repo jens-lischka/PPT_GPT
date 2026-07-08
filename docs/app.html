@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>OW Deck Builder</title>
+  <script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
+  <style>
+    body { font-family: "Segoe UI", sans-serif; margin: 0; font-size: 13px; color: #1a1a1a; }
+    header { background: #0a1f2e; color: #fff; padding: 10px 14px; font-weight: 600; }
+    main { padding: 12px 14px; }
+    section { border: 1px solid #e3e0d8; border-radius: 6px; padding: 10px 12px; margin-bottom: 12px; }
+    h4 { margin: 0 0 8px; font-size: 13px; }
+    label { display: block; font-size: 11px; color: #555; margin: 6px 0 2px; }
+    input, textarea, select { width: 100%; box-sizing: border-box; padding: 6px; font: inherit;
+      border: 1px solid #cfcabd; border-radius: 4px; }
+    textarea { height: 60px; resize: vertical; }
+    button { margin: 6px 6px 0 0; padding: 7px 12px; border: 0; border-radius: 4px; cursor: pointer;
+      background: #1f6f8b; color: #fff; font: inherit; }
+    button.secondary { background: #e3e0d8; color: #1a1a1a; }
+    button:disabled { opacity: .45; cursor: not-allowed; }
+    #log { white-space: pre-wrap; background: #f5f4f0; padding: 8px; border-radius: 4px;
+      min-height: 60px; margin-top: 10px; font-size: 12px; max-height: 180px; overflow: auto; }
+    .row { display: flex; gap: 8px; } .row > * { flex: 1; }
+    .gate-pass { color: #2a7a2a; font-weight: 600; } .gate-fail { color: #b02020; font-weight: 600; }
+    .muted { color: #777; font-size: 11px; }
+    ol.storyline { margin: 6px 0; padding-left: 20px; } ol.storyline li { margin-bottom: 4px; }
+    details summary { cursor: pointer; color: #1f6f8b; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <header>OW Deck Builder</header>
+  <main>
+    <details id="cfg"><summary>⚙︎ Settings (backend)</summary>
+      <label>Edge function URL (…/functions/v1/generate)</label>
+      <input id="edgeUrl" placeholder="https://YOURPROJECT.supabase.co/functions/v1/generate" />
+      <label>Supabase anon key (Authorization)</label>
+      <input id="anonKey" placeholder="eyJ… (optional for local renderer-only tests)" />
+      <div class="row">
+        <div><label>Language (BCP-47)</label><input id="language" placeholder="de-DE" /></div>
+        <div><label>Audience</label><input id="audience" placeholder="board" /></div>
+      </div>
+      <button class="secondary" id="saveCfg">Save</button>
+    </details>
+
+    <!-- PHASE 1 -->
+    <section>
+      <h4>Generate a deck</h4>
+      <label>What should the deck be about?</label>
+      <textarea id="prompt" placeholder="e.g. Board update on our supplier consolidation: situation, the numbers, recommendation."></textarea>
+      <button id="btnStoryline">Propose storyline</button>
+      <div id="storylineBox"></div>
+      <button id="btnGenerate" disabled>Build deck</button>
+      <div id="genGate"></div>
+      <button id="btnInsertDeck" disabled>Insert deck</button>
+    </section>
+
+    <!-- PHASE 2 -->
+    <section>
+      <h4>Edit the selected slide</h4>
+      <button class="secondary" id="btnWhich">Which slide is selected?</button>
+      <label>Command</label>
+      <textarea id="cmd" placeholder="e.g. change the data to Q1 actuals; swap to a bar chart; tighten the title."></textarea>
+      <button id="btnEdit">Apply edit</button>
+      <div id="editGate"></div>
+      <hr style="border:none;border-top:1px solid #eee;margin:10px 0" />
+      <label>Create a new slide after the selection</label>
+      <textarea id="newSlide" placeholder="e.g. a four-column slide, each column a KPI card."></textarea>
+      <button id="btnCreate">Create slide here</button>
+      <div id="createGate"></div>
+    </section>
+
+    <div id="log">ready.</div>
+  </main>
+
+  <script>
+  // ---------- state ----------
+  const $ = (id) => document.getElementById(id);
+  const log = (m) => { const el = $("log"); el.textContent += "\n" + m; el.scrollTop = el.scrollHeight; };
+  const cfg = {}; let storyline = null, deckSpec = null, deckPptx = null;
+  const SPEC_KEY = "ow_specs";                     // slide_uuid -> {spec, deck_id}
+  const specStore = JSON.parse(localStorage.getItem(SPEC_KEY) || "{}");
+  const saveSpecs = () => localStorage.setItem(SPEC_KEY, JSON.stringify(specStore));
+
+  function loadCfg() {
+    Object.assign(cfg, JSON.parse(localStorage.getItem("ow_cfg") || "{}"));
+    $("edgeUrl").value = cfg.edgeUrl || ""; $("anonKey").value = cfg.anonKey || "";
+    $("language").value = cfg.language || ""; $("audience").value = cfg.audience || "";
+  }
+  $("saveCfg").onclick = () => {
+    Object.assign(cfg, { edgeUrl: $("edgeUrl").value.trim(), anonKey: $("anonKey").value.trim(),
+      language: $("language").value.trim(), audience: $("audience").value.trim() });
+    localStorage.setItem("ow_cfg", JSON.stringify(cfg));
+    log("settings saved.");
+  };
+
+  Office.onReady(() => {
+    loadCfg();
+    const s15 = Office.context.requirements.isSetSupported("PowerPointApi", "1.5");
+    log("ready — host " + Office.context.host + " · PowerPointApi 1.5: " + s15);
+    if (!s15) log("⚠ selection/tags/replace need PowerPointApi 1.5 — some features will be limited.");
+  });
+
+  // ---------- backend ----------
+  async function callEdge(payload) {
+    if (!cfg.edgeUrl) throw new Error("Set the edge function URL in Settings first.");
+    const body = { ...payload, language: cfg.language || undefined, audience: cfg.audience || undefined };
+    const res = await fetch(cfg.edgeUrl, {
+      method: "POST",
+      headers: { "content-type": "application/json",
+        ...(cfg.anonKey ? { "authorization": "Bearer " + cfg.anonKey } : {}) },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json();
+    if (!res.ok || data.error) throw new Error(data.error || ("edge " + res.status));
+    return data;
+  }
+  function showGate(el, g) {
+    if (!g) { el.innerHTML = ""; return null; }
+    el.innerHTML = `<p class="${g.passed ? "gate-pass" : "gate-fail"}">gate ${g.passed ? "PASS" : "FAIL"}` +
+      ` · score ${g.overall_score ?? "?"}</p>` +
+      (g.warn_items?.length ? `<p class="muted">warnings: ${g.warn_items.length}</p>` : "");
+    return g.passed;
+  }
+
+  // ---------- Office helpers ----------
+  async function slideIds(ctx) {
+    const slides = ctx.presentation.slides; slides.load("items/id"); await ctx.sync();
+    return slides.items.map((s) => s.id);
+  }
+  // insert a base64 deck, optionally after targetId; return the new slides' ids in order.
+  async function insertReturningIds(b64, targetId) {
+    let created = [];
+    await PowerPoint.run(async (ctx) => {
+      const before = new Set(await slideIds(ctx));
+      const opts = { formatting: PowerPoint.InsertSlideFormatting.useDestinationTheme };
+      if (targetId) opts.targetSlideId = targetId;
+      ctx.presentation.insertSlidesFromBase64(b64, opts);
+      await ctx.sync();
+      created = (await slideIds(ctx)).filter((id) => !before.has(id));  // presentation order
+    });
+    return created;
+  }
+  async function tagSlide(slideId, uuid) {
+    await PowerPoint.run(async (ctx) => {
+      const s = ctx.presentation.slides.getItem(slideId);
+      s.tags.add("OW_SLIDE_UUID", uuid); await ctx.sync();
+    });
+  }
+  async function deleteSlide(slideId) {
+    await PowerPoint.run(async (ctx) => {
+      ctx.presentation.slides.getItem(slideId).delete(); await ctx.sync();
+    });
+  }
+  async function getSelected() {
+    let out = [];
+    await PowerPoint.run(async (ctx) => {
+      const sel = ctx.presentation.getSelectedSlides();
+      sel.load("items/id,items/index,items/tags/key,items/tags/value"); await ctx.sync();
+      out = sel.items.map((s) => ({ id: s.id, index: s.index,
+        uuid: (s.tags.items.find((t) => t.key === "OW_SLIDE_UUID") || {}).value }));
+    });
+    return out;
+  }
+
+  // ---------- PHASE 1 ----------
+  $("btnStoryline").onclick = async () => {
+    try {
+      const prompt = $("prompt").value.trim();
+      if (!prompt) return log("enter a brief first.");
+      log("drafting storyline…");
+      const d = await callEdge({ mode: "storyline", prompt });
+      storyline = d.storyline?.storyline || d.storyline;   // {title,language,audience,storyline:[...]}
+      const items = storyline.storyline || storyline;
+      $("storylineBox").innerHTML = `<p class="muted">${storyline.title || ""} · ${items.length} slides</p>` +
+        "<ol class='storyline'>" + items.map((s) =>
+          `<li><b>${s.intent}</b> — ${s.title}<br><span class="muted">${s.note || ""}</span></li>`).join("") + "</ol>";
+      $("btnGenerate").disabled = false;
+      log("storyline ready — review, then Build deck.");
+    } catch (e) { log("ERROR " + e); }
+  };
+
+  $("btnGenerate").onclick = async () => {
+    try {
+      log("building deck (render + gate)…");
+      const d = await callEdge({ mode: "generate", storyline: storyline, prompt: $("prompt").value.trim() });
+      deckSpec = d.spec; deckPptx = d.pptx_base64; deckSpec._persisted = d.persisted || null;
+      const ok = showGate($("genGate"), d.gate_result);
+      $("btnInsertDeck").disabled = !ok;
+      log(`built ${d.slide_count} slides · ${ok ? "ready to insert" : "gate FAILED — insertion blocked"}`);
+      if (d.persisted) log("persisted deck " + d.persisted.deck_id);
+    } catch (e) { log("ERROR " + e); }
+  };
+
+  $("btnInsertDeck").onclick = async () => {
+    try {
+      const created = await insertReturningIds(deckPptx, null);
+      const persisted = deckSpec._persisted;
+      for (let i = 0; i < created.length; i++) {
+        const uuid = persisted?.slides?.[i]?.slide_uuid || crypto.randomUUID();
+        await tagSlide(created[i], uuid);
+        specStore[uuid] = { spec: deckSpec.slides[i], deck_id: persisted?.deck_id || null };
+      }
+      saveSpecs();
+      log(`inserted & tagged ${created.length} slides.`);
+      $("btnInsertDeck").disabled = true;
+    } catch (e) { log("ERROR " + e); }
+  };
+
+  // ---------- PHASE 2 ----------
+  $("btnWhich").onclick = async () => {
+    try {
+      const sel = await getSelected();
+      if (!sel.length) return log("(nothing selected)");
+      sel.forEach((s) => log(`slide index=${s.index} uuid=${s.uuid || "(untracked)"}` +
+        (s.uuid && specStore[s.uuid] ? ` intent=${specStore[s.uuid].spec.intent}` : "")));
+    } catch (e) { log("ERROR " + e); }
+  };
+
+  $("btnEdit").onclick = async () => {
+    try {
+      const cmd = $("cmd").value.trim(); if (!cmd) return log("enter an edit command.");
+      const sel = await getSelected();
+      if (!sel.length) return log("select a slide first.");
+      const target = sel[0];
+      if (!target.uuid || !specStore[target.uuid])
+        return log("this slide isn't tracked (created outside the pane). Adopting foreign slides is Phase 3.");
+      const rec = specStore[target.uuid];
+      log("editing slide…");
+      const d = await callEdge({ mode: "edit_slide", slide_spec: rec.spec, command: cmd,
+        deck_id: rec.deck_id, slide_uuid: target.uuid });
+      const ok = showGate($("editGate"), d.gate_result);
+      if (!ok) return log("gate FAILED — slide not replaced.");
+      // regenerate-and-replace: insert after old, tag with same uuid, delete old
+      const created = await insertReturningIds(d.pptx_base64, target.id);
+      if (created.length) {
+        await tagSlide(created[0], target.uuid);
+        specStore[target.uuid] = { spec: d.spec, deck_id: rec.deck_id }; saveSpecs();
+        await deleteSlide(target.id);
+        log("slide replaced ✓");
+      }
+    } catch (e) { log("ERROR " + e); }
+  };
+
+  $("btnCreate").onclick = async () => {
+    try {
+      const prompt = $("newSlide").value.trim(); if (!prompt) return log("describe the new slide.");
+      const sel = await getSelected();
+      const after = sel[0]?.id || null;
+      log("creating slide…");
+      const d = await callEdge({ mode: "generate_slide", prompt });
+      const ok = showGate($("createGate"), d.gate_result);
+      if (!ok) return log("gate FAILED — slide not inserted.");
+      const created = await insertReturningIds(d.pptx_base64, after);
+      if (created.length) {
+        const uuid = crypto.randomUUID();
+        await tagSlide(created[0], uuid);
+        specStore[uuid] = { spec: d.spec, deck_id: null }; saveSpecs();
+        log("slide created ✓");
+      }
+    } catch (e) { log("ERROR " + e); }
+  };
+  </script>
+</body>
+</html>

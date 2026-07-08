@@ -116,6 +116,12 @@ for out in (DIST / "taskpane.html", DOCS / "index.html"):
     out.write_text(rendered)
     print(f"wrote {out} ({out.stat().st_size} bytes)")
 
+# The Phase 1+2 app pane is hand-maintained (no inlined assets); copy it to
+# docs/ so GitHub Pages serves it alongside the spike pane.
+app = (HERE / "src" / "app.html").read_text()
+(DOCS / "app.html").write_text(app)
+print(f"wrote {DOCS / 'app.html'} ({len(app)} bytes)")
+
 # .nojekyll stops GitHub Pages' Jekyll pass from touching the static files.
 (DOCS / ".nojekyll").write_text("")
 print(f"wrote {DOCS / '.nojekyll'}")
