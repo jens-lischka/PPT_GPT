@@ -1,0 +1,74 @@
+{
+ "slides": [
+  {
+   "intent": "introduce_topic",
+   "content": {
+    "title": "Supplier consolidation review",
+    "subtitle": "Procurement steering committee"
+   }
+  },
+  {
+   "intent": "explain",
+   "content": {
+    "title": "Spend is fragmented across nine suppliers with no pricing power",
+    "body": {
+     "paragraphs": [
+      "Volume is split so thinly that no single supplier offers a volume discount, and three of the nine account for under 2% of spend each."
+     ]
+    },
+    "conclusion": "Fragmentation is costing roughly four points of margin.",
+    "footnote": "Source: FY25 procurement spend analysis; supplier master, accessed 2026."
+   }
+  },
+  {
+   "intent": "show_data",
+   "content": {
+    "title": "Two suppliers would cover 80% of volume at better rates",
+    "table": {
+     "headers": [
+      "Supplier",
+      "Share",
+      "Unit cost",
+      "Lead time"
+     ],
+     "rows": [
+      [
+       "Preferred A",
+       "48%",
+       "-7%",
+       "5 days"
+      ],
+      [
+       "Preferred B",
+       "32%",
+       "-5%",
+       "6 days"
+      ],
+      [
+       "Long tail (7)",
+       "20%",
+       "baseline",
+       "9-21 days"
+      ]
+     ]
+    },
+    "conclusion": "Consolidation lowers unit cost and shortens lead time.",
+    "footnote": "Source: supplier RFQ responses, Q1 2026."
+   }
+  },
+  {
+   "intent": "summary",
+   "content": {
+    "title": "Recommendation: consolidate to two preferred suppliers in H1",
+    "conclusion": "Consolidation cuts cost and concentrates accountability without single-sourcing risk.",
+    "body": {
+     "bullets": [
+      "Award 80% of volume to Preferred A and B on 24-month terms.",
+      "Retain a thin long tail for resilience on specialty parts.",
+      "Target a four-point unit-cost reduction by year end."
+     ]
+    }
+   }
+  }
+ ]
+}

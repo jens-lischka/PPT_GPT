@@ -1,0 +1,385 @@
+{
+  "deck": {
+    "title": "Phase 11 \u2014 SmartArt-style visuals (chevrons + bullets, pyramid, cycle)",
+    "template": "OW_Default.pptx"
+  },
+  "compiler": {
+    "version": "phase-11",
+    "rules": [
+      "first chevron is a pentagon, marking the start of the flow",
+      "chevron bullet columns are stride-aligned with each shape",
+      "pyramid stacks trapezoids top\u2192bottom (top = triangle); narrow at peak",
+      "cycle arranges ovals on a circle with arrow connectors closing the loop"
+    ]
+  },
+  "slides": [
+    {
+      "intent": "introduce_topic",
+      "content": {
+        "title": "Phase 11 \u2014 SmartArt-style visuals",
+        "subtitle": "Pentagon-led chevron flows, pyramids, cycles, and hierarchies"
+      }
+    },
+    {
+      "intent": "section_divider",
+      "content": {
+        "title": "Process \u2014 chevron flow with bullets",
+        "number": "01"
+      }
+    },
+    {
+      "intent": "show_process",
+      "content": {
+        "title": "Implementation roadmap",
+        "steps": [
+          {
+            "label": "Discover",
+            "heading": "Heading",
+            "bullets": [
+              "Lorem ipsum dolor sit amet, consectetuer adipiscing elit.",
+              "Maecenas porttitor congue massa.",
+              "Fusce posuere, magna sed pulvinar ultricies, purus lectus malesuada libero."
+            ]
+          },
+          {
+            "label": "Design",
+            "heading": "Heading",
+            "bullets": [
+              "Lorem ipsum dolor sit amet, consectetuer adipiscing elit.",
+              "Maecenas porttitor congue massa.",
+              "Fusce posuere, magna sed pulvinar ultricies, purus lectus malesuada libero."
+            ]
+          },
+          {
+            "label": "Build",
+            "heading": "Heading",
+            "bullets": [
+              "Lorem ipsum dolor sit amet, consectetuer adipiscing elit.",
+              "Maecenas porttitor congue massa.",
+              "Fusce posuere, magna sed pulvinar ultricies, purus lectus malesuada libero."
+            ]
+          },
+          {
+            "label": "Pilot",
+            "heading": "Heading",
+            "bullets": [
+              "Lorem ipsum dolor sit amet, consectetuer adipiscing elit.",
+              "Maecenas porttitor congue massa.",
+              "Fusce posuere, magna sed pulvinar ultricies, purus lectus malesuada libero."
+            ]
+          },
+          {
+            "label": "Scale",
+            "heading": "Heading",
+            "bullets": [
+              "Lorem ipsum dolor sit amet, consectetuer adipiscing elit.",
+              "Maecenas porttitor congue massa.",
+              "Fusce posuere, magna sed pulvinar ultricies, purus lectus malesuada libero."
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "intent": "show_process",
+      "content": {
+        "title": "Same intent, no bullets \u2014 chevrons fill the band",
+        "steps": [
+          {
+            "label": "Plan"
+          },
+          {
+            "label": "Run"
+          },
+          {
+            "label": "Measure"
+          },
+          {
+            "label": "Iterate"
+          }
+        ]
+      }
+    },
+    {
+      "intent": "section_divider",
+      "content": {
+        "title": "Pyramid \u2014 stacked hierarchy",
+        "number": "02"
+      }
+    },
+    {
+      "intent": "show_pyramid",
+      "content": {
+        "title": "Strategy ladder",
+        "levels": [
+          {
+            "label": "Vision"
+          },
+          {
+            "label": "Strategy"
+          },
+          {
+            "label": "Execution"
+          },
+          {
+            "label": "Operations"
+          }
+        ]
+      }
+    },
+    {
+      "intent": "section_divider",
+      "content": {
+        "title": "Cycle \u2014 repeating flow",
+        "number": "03"
+      }
+    },
+    {
+      "intent": "show_cycle",
+      "content": {
+        "title": "Plan-Do-Check-Act",
+        "items": [
+          {
+            "label": "Plan"
+          },
+          {
+            "label": "Do"
+          },
+          {
+            "label": "Check"
+          },
+          {
+            "label": "Act"
+          }
+        ]
+      }
+    },
+    {
+      "intent": "section_divider",
+      "content": {
+        "title": "Hierarchy \u2014 organisational chart",
+        "number": "04"
+      }
+    },
+    {
+      "intent": "show_org_chart",
+      "content": {
+        "title": "Leadership team",
+        "org_chart": {
+          "root": {
+            "name": "Jane Smith",
+            "title": "Chief Executive Officer"
+          },
+          "reports": [
+            {
+              "name": "Alex Wong",
+              "title": "Chief Technology Officer"
+            },
+            {
+              "name": "Maria Lopez",
+              "title": "Chief Financial Officer"
+            },
+            {
+              "name": "Sam Patel",
+              "title": "Chief Operating Officer"
+            },
+            {
+              "name": "Lin Zhao",
+              "title": "Chief Marketing Officer"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "intent": "section_divider",
+      "content": {
+        "title": "Bio pages \u2014 native picture placeholders",
+        "number": "05"
+      }
+    },
+    {
+      "intent": "introduce_person",
+      "content": {
+        "name": "Jane Doe",
+        "role": "Partner, Financial Services",
+        "photo": {
+          "label": "Jane Doe"
+        },
+        "bio": {
+          "heading": "Background",
+          "bullets": [
+            "20+ years in banking strategy and risk transformation",
+            "Led the post-merger integration for a top-five European bank",
+            "MBA, INSEAD; CFA charterholder",
+            "Frequent speaker at the Financial Times' Future of Banking summit",
+            "Co-author of \"Capital Markets in the Age of Algorithms\""
+          ]
+        }
+      }
+    },
+    {
+      "intent": "summary",
+      "content": {
+        "title": "Phase 11 wraps up",
+        "body": {
+          "heading": "What changed",
+          "bullets": [
+            "Chevron flows now lead with a pentagon (flat left edge) \u2014 visual cue for 'start here'",
+            "Each chevron can carry a bullet column underneath, stride-aligned with the shape pattern",
+            "New show_pyramid intent stacks trapezoids; top level is a triangle by construction",
+            "New show_cycle intent arranges ovals on a circle with arrow connectors back to the start",
+            "All four SmartArt-style intents render on Title Only as engine-composed canvases"
+          ]
+        }
+      }
+    },
+    {
+      "intent": "section_divider",
+      "content": {
+        "title": "Bottom adornments \u2014 Conclusion + Footnote",
+        "number": "06"
+      }
+    },
+    {
+      "intent": "show_data",
+      "content": {
+        "title": "Conclusion only \u2014 anchored at footer baseline",
+        "table": {
+          "headers": [
+            "Region",
+            "Q1",
+            "Q2",
+            "Q3",
+            "Q4"
+          ],
+          "rows": [
+            [
+              "EMEA",
+              "120",
+              "135",
+              "142",
+              "158"
+            ],
+            [
+              "Americas",
+              "180",
+              "195",
+              "210",
+              "225"
+            ],
+            [
+              "APAC",
+              "95",
+              "108",
+              "118",
+              "130"
+            ]
+          ]
+        }
+      },
+      "conclusion": "EMEA outpaced APAC growth by 8 points in H2"
+    },
+    {
+      "intent": "show_data",
+      "content": {
+        "title": "Footnote only \u2014 single-line source",
+        "table": {
+          "headers": [
+            "Region",
+            "Q1",
+            "Q2",
+            "Q3",
+            "Q4"
+          ],
+          "rows": [
+            [
+              "EMEA",
+              "120",
+              "135",
+              "142",
+              "158"
+            ],
+            [
+              "Americas",
+              "180",
+              "195",
+              "210",
+              "225"
+            ],
+            [
+              "APAC",
+              "95",
+              "108",
+              "118",
+              "130"
+            ]
+          ]
+        }
+      },
+      "footnote": "1. Quarterly revenue in USD millions\nSource: Internal financial reporting, FY2024"
+    },
+    {
+      "intent": "show_data",
+      "content": {
+        "title": "Both \u2014 Conclusion shifts up to clear the Footnote",
+        "table": {
+          "headers": [
+            "Region",
+            "Q1",
+            "Q2",
+            "Q3",
+            "Q4"
+          ],
+          "rows": [
+            [
+              "EMEA",
+              "120",
+              "135",
+              "142",
+              "158"
+            ],
+            [
+              "Americas",
+              "180",
+              "195",
+              "210",
+              "225"
+            ],
+            [
+              "APAC",
+              "95",
+              "108",
+              "118",
+              "130"
+            ]
+          ]
+        }
+      },
+      "conclusion": "EMEA outpaced APAC growth by 8 points in H2",
+      "footnote": "1. Quarterly revenue in USD millions\nSource: Internal financial reporting, FY2024"
+    },
+    {
+      "intent": "show_process",
+      "content": {
+        "title": "Multi-line footnote pushes Conclusion further up",
+        "steps": [
+          {
+            "label": "Plan"
+          },
+          {
+            "label": "Run"
+          },
+          {
+            "label": "Measure"
+          },
+          {
+            "label": "Iterate"
+          }
+        ]
+      },
+      "conclusion": "Continuous-improvement loops compound \u2014 small gains, repeated, dominate",
+      "footnote": "1. Each cycle assumes 2-week sprint cadence with retrospective\n2. Measurement uses leading indicators where available; lagging otherwise\n3. Iteration scope must remain bounded to preserve velocity\nSource: Internal program management practice guide, 2024 revision"
+    }
+  ]
+}

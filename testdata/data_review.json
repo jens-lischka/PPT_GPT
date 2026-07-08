@@ -1,0 +1,6 @@
+{"slides":[
+ {"intent":"introduce_topic","content":{"title":"Q4 commercial review","subtitle":"Revenue, margin and pipeline"}},
+ {"intent":"show_data","content":{"title":"Revenue beat plan every quarter, widening in H2","chart":{"type":"column_clustered","categories":["Q1","Q2","Q3","Q4"],"series":[{"name":"Actual","values":[100,118,132,141]},{"name":"Plan","values":[100,115,128,134]}]},"conclusion":"Outperformance accelerated as the new pricing took hold.","footnote":"Source: finance actuals vs board plan, FY25."}},
+ {"intent":"dashboard","content":{"title":"The headline KPIs all moved the right way","metrics":[{"label":"Revenue","value":"$141m","icon":"chart"},{"label":"Gross margin","value":"34%","icon":"percent"},{"label":"Net retention","value":"112%","icon":"refresh"},{"label":"CAC payback","value":"11 mo","icon":"clock"}],"footnote":"Source: finance and RevOps dashboards, Dec 2025."}},
+ {"intent":"show_trend","content":{"title":"Pipeline coverage recovered to 3.4x after the Q2 dip","chart":{"type":"line","categories":["Q1","Q2","Q3","Q4"],"series":[{"name":"Coverage","values":[3.1,2.6,3.0,3.4]}]},"conclusion":"Coverage is back above the 3x threshold heading into FY26.","footnote":"Source: CRM pipeline snapshot, quarter-end."}}
+]}

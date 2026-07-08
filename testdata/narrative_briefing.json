@@ -1,0 +1,51 @@
+{
+ "slides": [
+  {
+   "intent": "introduce_topic",
+   "content": {
+    "title": "Why our category is shifting",
+    "subtitle": "A briefing for the leadership offsite"
+   }
+  },
+  {
+   "intent": "section_divider",
+   "content": {
+    "title": "What changed"
+   }
+  },
+  {
+   "intent": "explain",
+   "content": {
+    "title": "Buyers moved from annual contracts to usage-based commitments",
+    "body": {
+     "paragraphs": [
+      "Three years ago, almost all revenue came from fixed annual licences. Buyers now expect to pay for what they use, and procurement teams increasingly insist on consumption terms before they will sign.",
+      "That shift rewards products that prove value quickly and punishes those that rely on shelfware, because a customer who is not using the product simply stops paying."
+     ]
+    },
+    "footnote": "Source: customer contract analysis, 2023-2026."
+   }
+  },
+  {
+   "intent": "quote",
+   "content": {
+    "quote": "We will not sign another fixed annual deal; show us usage and we will grow with it.",
+    "attribution": "Head of procurement, top-10 account"
+   }
+  },
+  {
+   "intent": "summary",
+   "content": {
+    "title": "What this means for our roadmap",
+    "conclusion": "The category now rewards demonstrated usage, so our roadmap has to make value visible and expansion easy.",
+    "body": {
+     "bullets": [
+      "Instrument the product so usage is visible to the customer, not just to us.",
+      "Price in a way that lets accounts start small and expand.",
+      "Make first-value time the metric the whole company watches."
+     ]
+    }
+   }
+  }
+ ]
+}

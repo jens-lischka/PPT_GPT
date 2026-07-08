@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>OW Deck Builder</title>
+  <script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
+  <style>
+    body { font-family: "Segoe UI", sans-serif; margin: 12px; font-size: 13px; }
+    #log { white-space: pre-wrap; background: #f5f4f0; padding: 8px;
+           border-radius: 4px; min-height: 120px; margin-top: 8px; }
+    textarea { width: 100%; height: 70px; box-sizing: border-box; }
+    button { margin: 4px 4px 4px 0; padding: 6px 10px; }
+    .gate-pass { color: #2a7a2a; } .gate-fail { color: #b02020; }
+  </style>
+</head>
+<body>
+  <h3>OW Deck Builder — Phase 0 spike</h3>
+
+  <p><b>Spike question 1:</b> does the full feature set (chartEx treemap,
+  icon freeforms, native tables, waterfall) survive
+  <code>insertSlidesFromBase64</code> visually intact?</p>
+  <button id="btnSpike">Insert test deck at end</button>
+
+  <p><b>Spike question 2:</b> master/layout duplication on repeated inserts —
+  click the button 3× and inspect View → Slide Master.</p>
+
+  <hr/>
+  <p><b>Generate via backend</b> (needs RENDERER_URL below, running locally
+  or on Cloud Run):</p>
+  <input id="rendererUrl" style="width:100%" value="http://localhost:8123" />
+  <textarea id="prompt" placeholder="(Phase 1) prompt for the edge function — for the spike we post a golden brief straight to the renderer"></textarea>
+  <button id="btnRender">Render board_recommendation.json → insert</button>
+  <button id="btnSelection">Log selected slide ids + tags</button>
+
+  <div id="log">ready.</div>
+
+  <script>
+    const log = (m) => {
+      document.getElementById("log").textContent += "\n" + m;
+    };
+
+    Office.onReady(() => log("Office.js ready — host: " + Office.context.host));
+
+    // ---- Core operation: insert a base64 pptx after the current selection.
+    async function insertBase64(pptxBase64) {
+      await PowerPoint.run(async (ctx) => {
+        // insertSlidesFromBase64: API set PowerPointApi 1.2+.
+        // formatting: "UseDestinationTheme" maps inserted layouts onto the
+        // open presentation's master — this is what spike Q2 stresses.
+        ctx.presentation.insertSlidesFromBase64(pptxBase64, {
+          formatting: PowerPoint.InsertSlideFormatting.useDestinationTheme,
+        });
+        await ctx.sync();
+      });
+    }
+
+    // ---- Spike 1+2: fetch a pre-rendered test deck and insert it.
+    document.getElementById("btnSpike").onclick = async () => {
+      try {
+        const r = await fetch("assets/spike_deck.b64");
+        const b64 = (await r.text()).trim();
+        await insertBase64(b64);
+        log("inserted spike deck — now VISUALLY inspect: treemap? icons? table? waterfall?");
+      } catch (e) { log("ERROR " + e); }
+    };
+
+    // ---- Render a golden brief through the local renderer, then insert.
+    document.getElementById("btnRender").onclick = async () => {
+      try {
+        const base = document.getElementById("rendererUrl").value;
+        const spec = await (await fetch("assets/board_recommendation.json")).json();
+        log("rendering via " + base + " …");
+        const res = await fetch(base + "/render", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ deck_spec: spec }),
+        });
+        const d = await res.json();
+        const g = d.gate_result;
+        log(`gate ${g.passed ? "PASS" : "FAIL"} score ${g.overall_score} — inserting ${d.slide_count} slides`);
+        await insertBase64(d.pptx_base64);
+        log("inserted.");
+      } catch (e) { log("ERROR " + e); }
+    };
+
+    // ---- Selection awareness (Phase 2 foundation): ids + tags of selection.
+    document.getElementById("btnSelection").onclick = async () => {
+      try {
+        await PowerPoint.run(async (ctx) => {
+          // getSelectedSlides: PowerPointApi 1.5+.
+          const sel = ctx.presentation.getSelectedSlides();
+          sel.load("items/id,items/index,items/tags/key,items/tags/value");
+          await ctx.sync();
+          for (const s of sel.items) {
+            const tags = s.tags.items.map(t => `${t.key}=${t.value}`).join(", ") || "(no tags)";
+            log(`slide index=${s.index} id=${s.id} tags: ${tags}`);
+          }
+          if (!sel.items.length) log("(nothing selected)");
+        });
+      } catch (e) { log("ERROR " + e); }
+    };
+  </script>
+</body>
+</html>

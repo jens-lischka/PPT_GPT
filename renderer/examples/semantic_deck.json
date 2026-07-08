@@ -1,0 +1,193 @@
+{
+  "deck": {
+    "title": "Phase 9 — Capability Registry + Overflow Handling",
+    "template": "OW_Default.pptx"
+  },
+  "compiler": {
+    "version": "phase-9",
+    "rules": [
+      "authors supply intent + content",
+      "compiler picks layout via compatibility scoring AND capability registry",
+      "compiler evaluates content density per slot",
+      "compiler splits a single intent into multiple plans when content overflows",
+      "compiler never generates geometry"
+    ]
+  },
+  "slides": [
+    {
+      "intent": "introduce_topic",
+      "content": {
+        "title": "Phase 9 — Overflow handling",
+        "subtitle": "When content is too big, the compiler splits the slide"
+      }
+    },
+    {
+      "intent": "section_divider",
+      "content": {
+        "title": "Capability registry",
+        "number": "01"
+      }
+    },
+    {
+      "intent": "explain",
+      "content": {
+        "title": "What the capability registry adds",
+        "body": {
+          "heading": "Each layout declares what it supports",
+          "bullets": [
+            "Hard filter: an intent that needs 'chart' will not pick a layout whose supports excludes it",
+            "Inferred from intent's slot strategies via STRATEGY_TO_KIND",
+            "Layouts not in the registry default to permissive — unknown templates still work",
+            "Run `--list-capabilities` to print every layout's supported kinds"
+          ]
+        }
+      }
+    },
+    {
+      "intent": "section_divider",
+      "content": {
+        "title": "Overflow handling",
+        "number": "02"
+      }
+    },
+    {
+      "intent": "explain",
+      "content": {
+        "title": "The compiler now estimates content density",
+        "body": {
+          "heading": "How splitting decisions are made",
+          "bullets": [
+            "Each instruction is evaluated against the geometry of its target slot",
+            "Bullets: lines required vs lines that fit (width × char density)",
+            "Tables: rows × columns vs slot capacity at OW row/column heights",
+            "Variadic content (KPI dashboards): item count vs available slots",
+            "Splitting target: ≈ 0.9 density per page; >1.0 triggers a split",
+            "Other instructions on the slide are repeated unchanged across pages"
+          ]
+        }
+      }
+    },
+    {
+      "intent": "explain",
+      "content": {
+        "title": "Long bullet list — the compiler should split this",
+        "body": {
+          "heading": "Eighteen bullets that should not fit on one slide",
+          "bullets": [
+            "First bullet — describes a step in the workflow that involves several distinct sub-tasks the team must coordinate across regions and product lines",
+            "Second bullet — covers data ingestion from upstream systems and how schema drift is detected before processing reaches the warehouse",
+            "Third bullet — explains the validation pipeline that runs every night to catch anomalies in the pricing feed and inventory snapshots",
+            "Fourth bullet — walks through the model retraining cadence and the criteria for promoting a candidate model to production traffic",
+            "Fifth bullet — describes governance and approval workflow with named owners for every stage and clearly written exit criteria",
+            "Sixth bullet — covers the observability stack and the SLOs we hold ourselves to during peak hours and major release windows",
+            "Seventh bullet — addresses change management when a new contract is signed mid-quarter and how scope is rebalanced across teams",
+            "Eighth bullet — outlines the escalation path when a critical regression is detected post-deploy and the rollback decision tree",
+            "Ninth bullet — talks about how feedback from sales engineers is incorporated into the next iteration through the council process",
+            "Tenth bullet — discusses the measurement approach we use to quantify the impact of each release on revenue and retention",
+            "Eleventh bullet — describes the dependency we have on the upstream identity service and its SLAs for authentication latency",
+            "Twelfth bullet — summarises the open risks for the next planning cycle and the proposed mitigations for each high-severity item",
+            "Thirteenth bullet — explains how we balance technical debt paydown against new feature work in the quarterly roadmap",
+            "Fourteenth bullet — covers the incident review cadence and the blameless postmortem template we use to capture learnings",
+            "Fifteenth bullet — describes the runbook automation we built last quarter and the metrics tracking adoption across teams",
+            "Sixteenth bullet — explains the experimentation framework and how A/B variants are gated behind feature flags before rollout",
+            "Seventeenth bullet — covers the customer success motion that reduces churn during the first ninety days of a new account",
+            "Eighteenth bullet — closes with the open questions we will tackle in the strategy offsite next month and the expected outputs"
+          ]
+        }
+      }
+    },
+    {
+      "intent": "show_data",
+      "content": {
+        "title": "Twenty-row table — split across pages",
+        "table": {
+          "headers": ["Region", "Account", "FY24 Rev", "FY25 Rev", "YoY", "Margin", "Owner"],
+          "rows": [
+            ["NA",    "Acme Corp",        "$2.10M", "$2.45M", "+16.7%", "19%", "Lina Park"],
+            ["NA",    "Globex",           "$1.80M", "$2.05M", "+13.9%", "17%", "Lina Park"],
+            ["NA",    "Initech",          "$1.55M", "$1.62M",  "+4.5%", "16%", "Lina Park"],
+            ["NA",    "Umbrella",         "$3.20M", "$3.45M",  "+7.8%", "21%", "Tom Reyes"],
+            ["NA",    "Stark Industries", "$2.55M", "$2.85M", "+11.8%", "20%", "Tom Reyes"],
+            ["EMEA",  "Wayne Enterprises","$1.10M", "$1.30M", "+18.2%", "15%", "Tom Reyes"],
+            ["EMEA",  "Cyberdyne",        "$0.95M", "$1.20M", "+26.3%", "14%", "Tom Reyes"],
+            ["EMEA",  "Tyrell Corp",      "$2.00M", "$2.10M",  "+5.0%", "16%", "Tom Reyes"],
+            ["EMEA",  "Soylent",          "$1.80M", "$1.95M",  "+8.3%", "13%", "Tom Reyes"],
+            ["EMEA",  "Weyland-Yutani",   "$1.95M", "$2.05M",  "+5.1%", "15%", "Tom Reyes"],
+            ["APAC",  "Massive Dynamic",  "$0.80M", "$1.05M", "+31.3%", "13%", "Mei Chen"],
+            ["APAC",  "Oscorp",           "$1.20M", "$1.45M", "+20.8%", "14%", "Mei Chen"],
+            ["APAC",  "Pied Piper",       "$0.40M", "$0.62M", "+55.0%", "12%", "Mei Chen"],
+            ["APAC",  "Hooli",            "$1.00M", "$1.08M",  "+8.0%", "13%", "Mei Chen"],
+            ["LATAM", "Vandelay",         "$0.70M", "$0.85M", "+21.4%", "11%", "Ana Gomes"],
+            ["LATAM", "Pendant",          "$0.50M", "$0.65M", "+30.0%", "12%", "Ana Gomes"],
+            ["LATAM", "Bluth Co",         "$0.40M", "$0.40M",  "+0.0%", "10%", "Ana Gomes"],
+            ["LATAM", "Dunder Mifflin",   "$0.65M", "$0.75M", "+15.4%", "11%", "Ana Gomes"],
+            ["GLOBAL","HQ Cross-charge",  "$1.10M", "$1.05M",  "-4.5%", "8%",  "—"],
+            ["GLOBAL","Adjustments",      "$0.25M", "$0.10M", "-60.0%", "—",   "—"]
+          ]
+        }
+      }
+    },
+    {
+      "intent": "dashboard",
+      "content": {
+        "title": "Eight metrics on a four-slot layout — split into two dashboards",
+        "metrics": [
+          {"label": "Revenue",      "value": "$24M",  "delta": "+8% YoY"},
+          {"label": "Margin",       "value": "16%",   "delta": "+4pp"},
+          {"label": "NPS",          "value": "42",    "delta": "+6"},
+          {"label": "Automation",   "value": "68%",   "delta": "+17pp"},
+          {"label": "Active users", "value": "12.4K", "delta": "+22%"},
+          {"label": "Churn",        "value": "3.1%",  "delta": "-0.4pp"},
+          {"label": "Pipeline",     "value": "$48M",  "delta": "+12%"},
+          {"label": "Cycle time",   "value": "9 days","delta": "-2 days"}
+        ]
+      }
+    },
+    {
+      "intent": "dashboard",
+      "content": {
+        "title": "Control: four metrics fit a four-slot layout (no split)",
+        "metrics": [
+          {"label": "Revenue",    "value": "$24M", "delta": "+8% YoY"},
+          {"label": "Margin",     "value": "16%",  "delta": "+4pp"},
+          {"label": "NPS",        "value": "42",   "delta": "+6"},
+          {"label": "Automation", "value": "68%",  "delta": "+17pp"}
+        ]
+      }
+    },
+    {
+      "intent": "show_trend_with_key_message",
+      "content": {
+        "title": "Control: chart + insight (no overflow path)",
+        "chart": {
+          "type": "column_clustered",
+          "categories": ["Q1", "Q2", "Q3", "Q4"],
+          "series": [
+            {"name": "Revenue", "values": [100, 118, 132, 136]},
+            {"name": "Plan",    "values": [100, 115, 130, 142]}
+          ]
+        },
+        "insight": {
+          "title": "Density",
+          "text": "Charts don't trigger density splits; they scale to the slot."
+        }
+      }
+    },
+    {
+      "intent": "summary",
+      "content": {
+        "title": "Phase 9 wraps up",
+        "body": {
+          "heading": "What changed",
+          "bullets": [
+            "Layout capability registry hard-filters incompatible (intent, layout) pairs",
+            "Density evaluator estimates fit per slot for bullets and tables",
+            "Variadic overflow (dashboard) splits the metric list across multiple plans",
+            "Density overflow (bullets, tables) splits the offending payload",
+            "compile_slide() now returns List[CompilationPlan]; the executor loops"
+          ]
+        }
+      }
+    }
+  ]
+}

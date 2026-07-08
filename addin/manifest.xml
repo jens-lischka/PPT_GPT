@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<OfficeApp xmlns="http://schemas.microsoft.com/office/appforoffice/1.1"
+           xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+           xmlns:bt="http://schemas.microsoft.com/office/officeappbasictypes/1.0"
+           xsi:type="TaskPaneApp">
+  <Id>7f9e2c3a-1b4d-4e5f-9a8b-0c1d2e3f4a5b</Id>
+  <Version>0.1.0</Version>
+  <ProviderName>OW Deck Builder (spike)</ProviderName>
+  <DefaultLocale>en-US</DefaultLocale>
+  <DisplayName DefaultValue="OW Deck Builder"/>
+  <Description DefaultValue="Generate and edit OW-branded decks from a task pane."/>
+  <Hosts>
+    <Host Name="Presentation"/>
+  </Hosts>
+  <Requirements>
+    <Sets DefaultMinVersion="1.1">
+      <!-- insertSlidesFromBase64 needs 1.2; selection needs 1.5; tags 1.3.
+           Keep the manifest minimum LOW and feature-detect at runtime with
+           Office.context.requirements.isSetSupported("PowerPointApi", "1.5")
+           so the pane loads everywhere and degrades gracefully. -->
+      <Set Name="PowerPointApi" MinVersion="1.1"/>
+    </Sets>
+  </Requirements>
+  <DefaultSettings>
+    <SourceLocation DefaultValue="https://localhost:3000/src/taskpane.html"/>
+  </DefaultSettings>
+  <Permissions>ReadWriteDocument</Permissions>
+</OfficeApp>
