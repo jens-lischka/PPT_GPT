@@ -1,0 +1,25 @@
+# Render.com Blueprint — one deployable service for the test phase.
+# Deploys the FastAPI renderer (which also hosts the Claude /agent endpoint)
+# from this public repo. No CLI, no local Docker: New + → Blueprint → pick this
+# repo. Set ANTHROPIC_API_KEY in the dashboard when prompted (sync: false).
+#
+# The documented production architecture keeps rendering (Python) and
+# orchestration (Supabase edge, Deno) separate; this single service is the
+# low-friction test target and is easy to split later.
+services:
+  - type: web
+    name: ow-renderer
+    runtime: docker
+    rootDir: renderer
+    dockerfilePath: ./Dockerfile
+    region: frankfurt          # EU; matches the eu-central-1 preference
+    plan: free
+    healthCheckPath: /healthz
+    autoDeploy: true
+    envVars:
+      - key: ALLOWED_ORIGINS
+        value: https://jens-lischka.github.io
+      - key: ANTHROPIC_MODEL
+        value: claude-opus-4-8
+      - key: ANTHROPIC_API_KEY
+        sync: false            # set in the Render dashboard, never committed

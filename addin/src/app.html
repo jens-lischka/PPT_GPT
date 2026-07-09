@@ -31,10 +31,10 @@
   <header>OW Deck Builder</header>
   <main>
     <details id="cfg"><summary>⚙︎ Settings (backend)</summary>
-      <label>Edge function URL (…/functions/v1/generate)</label>
-      <input id="edgeUrl" placeholder="https://YOURPROJECT.supabase.co/functions/v1/generate" />
-      <label>Supabase anon key (Authorization)</label>
-      <input id="anonKey" placeholder="eyJ… (optional for local renderer-only tests)" />
+      <label>Backend URL — renderer <code>/agent</code> or Supabase edge function</label>
+      <input id="edgeUrl" placeholder="https://ow-renderer-xxxx.onrender.com/agent" />
+      <label>Auth bearer token (only for the Supabase edge function; leave empty for the renderer)</label>
+      <input id="anonKey" placeholder="eyJ… (optional)" />
       <div class="row">
         <div><label>Language (BCP-47)</label><input id="language" placeholder="de-DE" /></div>
         <div><label>Audience</label><input id="audience" placeholder="board" /></div>

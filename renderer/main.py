@@ -57,6 +57,19 @@ class RenderSlideRequest(BaseModel):
     audience: str | None = None
 
 
+class AgentRequest(BaseModel):
+    """Single-service orchestration: Claude drafts the spec, then we render.
+    Mirrors the Supabase edge function's contract so the task pane can point at
+    either backend unchanged."""
+    mode: str                           # storyline|generate|generate_slide|edit_slide
+    prompt: str | None = None
+    storyline: dict[str, Any] | None = None
+    slide_spec: dict[str, Any] | None = None
+    command: str | None = None
+    language: str | None = None
+    audience: str | None = None
+
+
 def _render(deck_spec: dict) -> dict:
     with tempfile.TemporaryDirectory() as td:
         out = Path(td) / "deck.pptx"
@@ -107,3 +120,68 @@ def render_slide(req: RenderSlideRequest):
         return _render(deck)
     except Exception as exc:                                  # noqa: BLE001
         raise HTTPException(status_code=422, detail=f"{type(exc).__name__}: {exc}")
+
+
+def _render_single(slide_spec: dict, language: str | None, audience: str | None) -> dict:
+    deck: dict[str, Any] = {"slides": [slide_spec]}
+    if language:
+        deck["language"] = language
+    if audience:
+        deck["audience"] = audience
+    return _render(deck)
+
+
+@app.post("/agent")
+def agent(req: AgentRequest):
+    """Claude-driven generation/edit collapsed into the renderer service (test
+    deployment). Same request/response contract as the Supabase edge function."""
+    import agent as ag  # lazy import: only /agent needs httpx + the API key
+    try:
+        if req.mode == "storyline":
+            user = f"Brief: {req.prompt}\n"
+            if req.language:
+                user += f"language: {req.language}\n"
+            if req.audience:
+                user += f"audience: {req.audience}\n"
+            return {"storyline": ag.call_claude(ag.SYSTEM_STORYLINE, user)}
+
+        if req.mode == "generate":
+            if req.storyline:
+                user = ("Confirmed storyline (build the full deck from it):\n"
+                        f"{req.storyline}\n")
+            else:
+                user = f"Brief: {req.prompt}\n"
+            if req.language:
+                user += f"language: {req.language}\n"
+            if req.audience:
+                user += f"audience: {req.audience}\n"
+            spec = ag.call_claude(ag.SYSTEM_GENERATE, user)
+            return {"spec": spec, **_render(spec)}
+
+        if req.mode == "generate_slide":
+            user = f"Request: {req.prompt}\n"
+            if req.language:
+                user += f"language: {req.language}\n"
+            if req.audience:
+                user += f"audience: {req.audience}\n"
+            slide = ag.call_claude(ag.SYSTEM_GENERATE_SLIDE, user)
+            return {"spec": slide, **_render_single(slide, req.language, req.audience)}
+
+        if req.mode == "edit_slide":
+            if not req.slide_spec or not req.command:
+                raise HTTPException(status_code=400,
+                                    detail="edit_slide requires slide_spec and command")
+            user = (f"Existing slide spec:\n{req.slide_spec}\n\n"
+                    f"Edit command: {req.command}\n")
+            if req.language:
+                user += f"language: {req.language}\n"
+            if req.audience:
+                user += f"audience: {req.audience}\n"
+            slide = ag.call_claude(ag.SYSTEM_EDIT_SLIDE, user)
+            return {"spec": slide, **_render_single(slide, req.language, req.audience)}
+
+        raise HTTPException(status_code=400, detail=f"unknown mode: {req.mode}")
+    except HTTPException:
+        raise
+    except Exception as exc:                                  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=f"{type(exc).__name__}: {exc}")
