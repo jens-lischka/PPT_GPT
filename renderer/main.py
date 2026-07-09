@@ -22,7 +22,8 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse, Response
+from starlette.requests import Request
 from pydantic import BaseModel
 
 HERE = Path(__file__).resolve().parent
@@ -36,17 +37,46 @@ TEMPLATE = str(HERE / "ow_default.pptx")
 
 app = FastAPI(title="OW deck renderer", version=RUNTIME_VERSION)
 
-# Task pane origin(s). ALLOWED_ORIGINS is a comma-separated list; "*" (the
-# test-phase default) allows any origin, which sidesteps origin-mismatch pain
-# while the hosting story is in flux. Tighten to the exact pane origin for prod.
+# CORS + error handling in one middleware. The stock CORSMiddleware does NOT
+# attach Access-Control-Allow-Origin to responses produced by unhandled
+# exceptions (they bypass it), so a server-side 500 shows up in the browser as a
+# misleading "No 'Access-Control-Allow-Origin' header" instead of the real
+# error. Here we (a) answer preflight, (b) catch every exception and return it as
+# JSON, and (c) stamp CORS headers on EVERY response — so the pane always sees
+# the true error text. ALLOWED_ORIGINS ("*" default for the test phase) echoes a
+# specific origin when configured.
 _allowed = os.environ.get("ALLOWED_ORIGINS", "*").strip()
-_origins = ["*"] if _allowed == "*" else [o.strip() for o in _allowed.split(",") if o.strip()]
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=_origins,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+_ORIGINS = None if _allowed == "*" else {o.strip() for o in _allowed.split(",") if o.strip()}
+
+
+def _cors(origin: str | None) -> dict[str, str]:
+    if _ORIGINS is None:
+        allow = "*"
+    elif origin and origin in _ORIGINS:
+        allow = origin
+    else:
+        allow = next(iter(_ORIGINS))
+    return {
+        "Access-Control-Allow-Origin": allow,
+        "Access-Control-Allow-Methods": "POST, GET, OPTIONS",
+        "Access-Control-Allow-Headers": "authorization, content-type",
+        "Vary": "Origin",
+    }
+
+
+@app.middleware("http")
+async def cors_and_errors(request: Request, call_next):
+    origin = request.headers.get("origin")
+    if request.method == "OPTIONS":
+        return Response(status_code=204, headers=_cors(origin))
+    try:
+        resp = await call_next(request)
+    except Exception as exc:                                  # noqa: BLE001
+        resp = JSONResponse(status_code=500,
+                            content={"error": f"{type(exc).__name__}: {exc}"})
+    for k, v in _cors(origin).items():
+        resp.headers[k] = v
+    return resp
 
 
 class RenderRequest(BaseModel):
