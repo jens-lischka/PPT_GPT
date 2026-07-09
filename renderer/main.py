@@ -167,8 +167,8 @@ def _render_single(slide_spec: dict, language: str | None, audience: str | None)
 def agent(req: AgentRequest):
     """Claude-driven generation/edit collapsed into the renderer service (test
     deployment). Same request/response contract as the Supabase edge function."""
-    import agent as ag  # lazy import: only /agent needs httpx + the API key
     try:
+        import agent as ag  # lazy import: only /agent needs httpx + the API key
         if req.mode == "storyline":
             user = f"Brief: {req.prompt}\n"
             if req.language:
