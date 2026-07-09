@@ -36,13 +36,15 @@ TEMPLATE = str(HERE / "ow_default.pptx")
 
 app = FastAPI(title="OW deck renderer", version=RUNTIME_VERSION)
 
-# Task pane origin(s). For local dev the Office loopback + localhost dev
-# server; tighten for production.
+# Task pane origin(s). ALLOWED_ORIGINS is a comma-separated list; "*" (the
+# test-phase default) allows any origin, which sidesteps origin-mismatch pain
+# while the hosting story is in flux. Tighten to the exact pane origin for prod.
+_allowed = os.environ.get("ALLOWED_ORIGINS", "*").strip()
+_origins = ["*"] if _allowed == "*" else [o.strip() for o in _allowed.split(",") if o.strip()]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=os.environ.get(
-        "ALLOWED_ORIGINS", "https://localhost:3000").split(","),
-    allow_methods=["POST", "GET"],
+    allow_origins=_origins,
+    allow_methods=["*"],
     allow_headers=["*"],
 )
 

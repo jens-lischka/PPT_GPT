@@ -18,7 +18,7 @@ services:
     autoDeploy: true
     envVars:
       - key: ALLOWED_ORIGINS
-        value: https://jens-lischka.github.io
+        value: "*"                # test phase: allow any origin; tighten for prod
       - key: ANTHROPIC_MODEL
         value: claude-opus-4-8
       - key: ANTHROPIC_API_KEY
