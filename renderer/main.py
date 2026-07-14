@@ -211,6 +211,46 @@ def _empty_slides(pptx_b64: str) -> list[int]:
     return empty
 
 
+def _slide_requests(slide: dict, kind: str) -> bool:
+    """Does this slide spec ask for a chart / table? (scan the JSON + intent)."""
+    try:
+        blob = json.dumps(slide)
+    except Exception:                                        # noqa: BLE001
+        blob = str(slide)
+    intent = slide.get("intent") if isinstance(slide, dict) else None
+    if kind == "chart":
+        return '"chart"' in blob or intent == "show_trend_with_key_message"
+    if kind == "table":
+        return '"table"' in blob or intent == "show_data"
+    return False
+
+
+def _shortfall_slides(deck_spec: dict, pptx_b64: str) -> list[int]:
+    """1-based indices where the spec asked for a chart/table but NONE rendered
+    — catches a visual dropped because the model got the data shape wrong (the
+    slide still has text, so it isn't 'empty', and the gate passes)."""
+    import io
+    from pptx import Presentation
+    slides = deck_spec.get("slides") or []
+    rendered = list(Presentation(io.BytesIO(base64.b64decode(pptx_b64))).slides)
+    if len(rendered) != len(slides):                         # overflow split → unmappable
+        return []
+    out = []
+    for i, (spec, rs) in enumerate(zip(slides, rendered), 1):
+        charts = sum(1 for sh in rs.shapes if sh.has_chart)
+        tables = sum(1 for sh in rs.shapes if sh.has_table)
+        if _slide_requests(spec, "chart") and charts == 0:
+            out.append(i)
+        elif _slide_requests(spec, "table") and tables == 0:
+            out.append(i)
+    return out
+
+
+def _bad_slides(deck_spec: dict, pptx_b64: str) -> list[int]:
+    """Slides that are blank OR missing a requested visual — must not ship."""
+    return sorted(set(_empty_slides(pptx_b64)) | set(_shortfall_slides(deck_spec, pptx_b64)))
+
+
 def _gate_feedback(gate: dict) -> str:
     """Render the gate's failing items as a fix list for the repair prompt.
     Hard fails block; warns only lower the score — list hard first, clearly."""
@@ -296,17 +336,39 @@ def _render_single(slide_spec: dict, language: str | None, audience: str | None)
 def _one_slide(ag, system: str, user: str, language, audience):
     """Render one slide; if it comes out blank (empty-canvas gap), rebuild once
     with an explicit instruction. Returns (slide_spec, render_result)."""
+    def _bad(slide, result):
+        """Blank/missing-visual from the spec, PLUS command-aware: if the request
+        text explicitly asked for a chart/table but none rendered, that's a fail
+        even when the model quietly produced a text-only slide."""
+        import io
+        from pptx import Presentation
+        bad = set(_bad_slides({"slides": [slide]}, result["pptx_base64"]))
+        sl = list(Presentation(io.BytesIO(base64.b64decode(result["pptx_base64"]))).slides)[0]
+        charts = sum(1 for sh in sl.shapes if sh.has_chart)
+        tables = sum(1 for sh in sl.shapes if sh.has_table)
+        low = user.lower()
+        if any(w in low for w in ("chart", "graph", "plot")) and charts == 0:
+            bad.add(1)
+        if "table" in low and tables == 0:
+            bad.add(1)
+        return sorted(bad)
+
     slide = ag.call_claude(system, user)
     result = _render_single(slide, language, audience)
-    if _empty_slides(result["pptx_base64"]):
-        print("[/agent] one-slide came out BLANK — retrying with guidance", flush=True)
-        retry = (user + "\n\nYour previous slide rendered COMPLETELY BLANK: the "
-                 "content keys were wrong for the intent and got dropped. Use a "
-                 "VALID structure (for multi-column-with-visuals use the "
-                 "columns_layout intent) and return the corrected slide.")
+    bad = _bad(slide, result)
+    if bad:
+        print("[/agent] one-slide blank/missing-visual — retrying", flush=True)
+        retry = (user + "\n\nYour previous slide was REJECTED: it rendered with "
+                 "MISSING content — either an empty canvas, or a chart/table the "
+                 "request asked for did not appear (you omitted it or its data shape "
+                 "was wrong). Include EVERY element the request asks for. For multi-"
+                 "column-with-visuals use the columns_layout intent; for a chart use "
+                 '{"chart":{"type":"column|bar|line|pie|area","categories":[…],'
+                 '"series":[{"name":"…","values":[…]}]}}. Return the corrected slide.')
         slide = ag.call_claude(system, retry)
         result = _render_single(slide, language, audience)
-    return slide, result
+        bad = _bad(slide, result)
+    return slide, result, bad
 
 
 # ---------------------------------------------------------------------------
@@ -371,9 +433,9 @@ def _fill_all(ag, items, prompt, language, audience, fixes=None, indices=None):
     return out
 
 
-def _failing_indices(result) -> dict:
+def _failing_indices(result, deck_spec) -> dict:
     """Map 0-based slide index -> feedback string, from the gate's hard fails
-    (which name 'slide N') plus blank-slide detection."""
+    (which name 'slide N'), blank-slide detection, and missing-visual detection."""
     import re
     gate = result["gate_result"]
     fb: dict[int, list[str]] = {}
@@ -387,6 +449,10 @@ def _failing_indices(result) -> dict:
         fb.setdefault(i - 1, []).append(
             "[blank] rendered EMPTY — the content keys were wrong for the intent; "
             "rebuild with a valid structure (columns_layout for multi-column).")
+    for i in _shortfall_slides(deck_spec, result["pptx_base64"]):
+        fb.setdefault(i - 1, []).append(
+            "[missing visual] a chart/table you specified did NOT render — the data "
+            'shape was wrong. Use chart {type, categories, series:[{name, values}]}.')
     return {i: "\n".join(v) for i, v in fb.items() if i >= 0}
 
 
@@ -409,7 +475,7 @@ def _generate_deck(ag, prompt, storyline, language, audience):
     attempts = 1
 
     if result["slide_count"] == len(slides):         # no overflow split → per-slide repair
-        fails = {i: v for i, v in _failing_indices(result).items() if 0 <= i < len(slides)}
+        fails = {i: v for i, v in _failing_indices(result, deck).items() if 0 <= i < len(slides)}
         if fails:
             print(f"[generate] per-slide repair of slides {sorted(k + 1 for k in fails)}", flush=True)
             fixed = _fill_all(ag, items, prompt, language, audience,
@@ -422,11 +488,11 @@ def _generate_deck(ag, prompt, storyline, language, audience):
             attempts = 2
     else:                                            # split happened → whole-deck repair
         gate = result["gate_result"]
-        empty = _empty_slides(result["pptx_base64"])
-        if not gate["passed"] or empty:
+        bad = _bad_slides(deck, result["pptx_base64"])
+        if not gate["passed"] or bad:
             fb = _gate_feedback(gate)
-            if empty:
-                fb += "\nBLANK SLIDES: " + ", ".join(map(str, empty))
+            if bad:
+                fb += "\nBLANK / MISSING-VISUAL SLIDES: " + ", ".join(map(str, bad))
             repair = (f"Brief: {prompt}\n" + (f"language: {language}\n" if language else "")
                       + "\nYou previously produced this deck:\n"
                       + json.dumps(deck, ensure_ascii=False)
@@ -455,12 +521,11 @@ def agent(req: AgentRequest):
         if req.mode == "generate":
             spec, result, attempts = _generate_deck(
                 ag, req.prompt, req.storyline, req.language, req.audience)
+            bad = _bad_slides(spec, result["pptx_base64"])
             print(f"[generate] done attempts={attempts} "
                   f"passed={result['gate_result']['passed']} "
-                  f"score={result['gate_result']['overall_score']} "
-                  f"empty={_empty_slides(result['pptx_base64'])}", flush=True)
-            return {"spec": spec, **result, "attempts": attempts,
-                    "empty_slides": _empty_slides(result["pptx_base64"])}
+                  f"score={result['gate_result']['overall_score']} bad={bad}", flush=True)
+            return {"spec": spec, **result, "attempts": attempts, "empty_slides": bad}
 
         if req.mode == "generate_slide":
             user = f"Request: {req.prompt}\n"
@@ -468,10 +533,9 @@ def agent(req: AgentRequest):
                 user += f"language: {req.language}\n"
             if req.audience:
                 user += f"audience: {req.audience}\n"
-            slide, result = _one_slide(ag, ag.SYSTEM_GENERATE_SLIDE, user,
-                                       req.language, req.audience)
-            return {"spec": slide, **result,
-                    "empty_slides": _empty_slides(result["pptx_base64"])}
+            slide, result, bad = _one_slide(ag, ag.SYSTEM_GENERATE_SLIDE, user,
+                                             req.language, req.audience)
+            return {"spec": slide, **result, "empty_slides": bad}
 
         if req.mode == "edit_slide":
             if not req.slide_spec or not req.command:
@@ -483,10 +547,9 @@ def agent(req: AgentRequest):
                 user += f"language: {req.language}\n"
             if req.audience:
                 user += f"audience: {req.audience}\n"
-            slide, result = _one_slide(ag, ag.SYSTEM_EDIT_SLIDE, user,
-                                       req.language, req.audience)
-            return {"spec": slide, **result,
-                    "empty_slides": _empty_slides(result["pptx_base64"])}
+            slide, result, bad = _one_slide(ag, ag.SYSTEM_EDIT_SLIDE, user,
+                                             req.language, req.audience)
+            return {"spec": slide, **result, "empty_slides": bad}
 
         return JSONResponse(status_code=400, content={"error": f"unknown mode: {req.mode}"})
     except Exception as exc:                                  # noqa: BLE001

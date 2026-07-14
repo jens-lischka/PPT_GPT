@@ -260,7 +260,7 @@
       deck_id: rec.deck_id, slide_uuid: target.uuid });
     const ok = showGate($("editGate"), d.gate_result);
     if (!ok) return log("gate FAILED — slide not replaced.");
-    if (d.empty_slides?.length) return log("the edited slide rendered blank — slide NOT replaced. Rephrase the command and try again.");
+    if (d.empty_slides?.length) return log("the edited slide came out blank or missing a chart/table you asked for — slide NOT replaced. Rephrase and try again.");
     // regenerate-and-replace in one round-trip: insert after old, tag, delete old
     const newId = await insertOne(d.pptx_base64, target.id, target.uuid, target.id);
     if (!newId) return log("insert produced no new slide — old slide kept, nothing changed.");
@@ -276,7 +276,7 @@
     const d = await callEdge({ mode: "generate_slide", prompt });
     const ok = showGate($("createGate"), d.gate_result);
     if (!ok) return log("gate FAILED — slide not inserted.");
-    if (d.empty_slides?.length) return log("the new slide rendered blank — not inserted. Rephrase and try again.");
+    if (d.empty_slides?.length) return log("the new slide came out blank or missing a chart/table you asked for — not inserted. Rephrase and try again.");
     const uuid = crypto.randomUUID();
     const newId = await insertOne(d.pptx_base64, after, uuid, null);
     if (!newId) return log("insert produced no new slide.");
