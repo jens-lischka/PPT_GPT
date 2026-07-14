@@ -72,19 +72,19 @@ CONTENT-KEY TRAPS (these break silently — obey exactly):
 - dashboard wants "metrics"; stat_callout wants "stats".
 
 MULTI-COLUMN-WITH-VISUALS (e.g. "N columns, each with a header, a chart and a
-paragraph"): this is NOT show_columns (text only). Use compose with a grid —
-one column per grid column, three stacked cells each:
-{ "intent":"compose", "content":{ "title":"…", "footnote":"Source: …",
-  "compose":{ "grid":{ "cols":N, "cells":[
-    {"block":"text","data":{"heading":"Region A"},"col":0,"row":0},
-    {"block":"chart","data":{"chart":{"type":"column","categories":["FY24","FY25"],
-       "series":[{"name":"Region A","values":[100,120]}]}},"col":0,"row":1},
-    {"block":"text","data":{"paragraphs":["One-line takeaway."]},"col":0,"row":2},
-    … repeat for col:1 … col:N-1 …
-  ]}}}}
-Every cell MUST have "block" and "data". NEVER put a "columns" key inside
-compose — compose only understands grid / rows / regions. A wrong key renders a
-BLANK slide.
+paragraph"): this is NOT show_columns (text only). Use the convenience intent
+"columns_layout" — do NOT hand-build a compose grid:
+{ "intent":"columns_layout", "content":{ "title":"…", "footnote":"Source: …",
+  "columns":[
+    { "heading":"Region A",
+      "chart":{"type":"column","categories":["FY24","FY25"],
+               "series":[{"name":"Region A","values":[100,120]}]},
+      "text":"One-line takeaway." },
+    …  2–5 columns … ] }}
+Per column: an optional "heading", ONE visual — "chart" (type column/bar/line/
+pie/area), OR "table":{headers,rows}, OR "kpi":{value,label}, OR "image":
+{prompt} — and an optional "text" (string) or "bullets":[…]. Python assembles
+the geometry, so you never touch grid mechanics.
 
 DO NOT use scatter/XY charts unless explicitly asked (data labels unsupported).
 
@@ -219,18 +219,30 @@ def call_claude(system: str, user_text: str, *, max_tokens: int = 16000,
     if thinking:
         payload["thinking"] = {"type": "adaptive"}
         payload["output_config"] = {"effort": "medium"}
-    resp = httpx.post(
-        "https://api.anthropic.com/v1/messages",
-        headers={
-            "content-type": "application/json",
-            "x-api-key": api_key,
-            "anthropic-version": "2023-06-01",
-        },
-        json=payload,
-        timeout=120.0,
-    )
-    if resp.status_code != 200:
-        raise RuntimeError(f"Claude {resp.status_code}: {resp.text}")
+    # Retry transient overload/rate-limit (429/500/529) — parallel per-slide
+    # calls make these more likely. Fixed backoff (no RNG in this runtime).
+    import time
+    last = None
+    for attempt in range(4):
+        resp = httpx.post(
+            "https://api.anthropic.com/v1/messages",
+            headers={
+                "content-type": "application/json",
+                "x-api-key": api_key,
+                "anthropic-version": "2023-06-01",
+            },
+            json=payload,
+            timeout=120.0,
+        )
+        if resp.status_code == 200:
+            break
+        last = f"Claude {resp.status_code}: {resp.text}"
+        if resp.status_code in (429, 500, 529) and attempt < 3:
+            time.sleep(2 * (attempt + 1))
+            continue
+        raise RuntimeError(last)
+    else:
+        raise RuntimeError(last or "Claude: exhausted retries")
     data = resp.json()
     text = "\n".join(b["text"] for b in data.get("content", [])
                      if b.get("type") == "text")

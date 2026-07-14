@@ -66,6 +66,30 @@ The gate result passes through untouched; the pane blocks insertion when
    function URL (`https://YOURPROJECT.supabase.co/functions/v1/generate`) and the
    Supabase anon key, set language/audience, Save.
 
+## Generation pipeline (renderer /agent)
+
+Two ideas from the original GPT design, implemented in the wrapper (runtime
+`src/` untouched):
+
+1. **Convenience macros** (`_expand_macros` in `main.py`). The model emits an
+   EASY shape and Python assembles the error-prone geometry. Today:
+   `columns_layout` → a `compose` grid (N columns, each with heading + one
+   visual (chart/table/kpi/image) + text). The model never writes grid
+   mechanics, which was the cause of blank multi-column slides. Applied inside
+   `_render`, so every path benefits.
+2. **Slide-by-slide content pass** (`_generate_deck`). Instead of one giant
+   call for the whole deck, generation is: storyline (fixes intent + action
+   title per slide) → **one focused, parallel call per slide** → assemble →
+   render + gate. Smaller per-call schema surface = far fewer mistakes.
+   Failing slides (gate hard-fails, which name "slide N", plus blank-slide
+   detection) are rebuilt **individually and in parallel**; a whole-deck repair
+   is the fallback when overflow-splitting makes indices unmappable.
+
+Belt-and-suspenders: `_empty_slides` flags any slide that rendered with no body
+content (the empty-canvas gap the gate misses) and forces a rebuild;
+`call_claude` retries 429/500/529 with backoff (parallel calls make these more
+likely).
+
 ## Known limits (honest)
 
 - The full chain (Claude → edge → renderer → PowerPoint) is untested until the

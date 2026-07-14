@@ -102,7 +102,74 @@ class AgentRequest(BaseModel):
     audience: str | None = None
 
 
+# ---------------------------------------------------------------------------
+# Convenience macros — a small, forgiving layer over the strict runtime schema.
+# The model emits an EASY shape; Python assembles the error-prone geometry (e.g.
+# a compose grid). This kills whole classes of "blank slide" schema mistakes
+# without the model ever writing compose-grid mechanics. Runtime src/ untouched.
+# ---------------------------------------------------------------------------
+def _expand_macros(deck_spec: dict) -> dict:
+    slides = deck_spec.get("slides")
+    if not isinstance(slides, list):
+        return deck_spec
+    if not any(isinstance(s, dict) and s.get("intent") in _MACROS for s in slides):
+        return deck_spec
+    out = dict(deck_spec)
+    out["slides"] = [_expand_slide(s) for s in slides]
+    return out
+
+
+def _expand_slide(slide: dict) -> dict:
+    if not isinstance(slide, dict) or slide.get("intent") not in _MACROS:
+        return slide
+    return _MACROS[slide["intent"]](slide.get("content") or {})
+
+
+def _macro_columns_layout(content: dict) -> dict:
+    """columns_layout → compose grid. Each column becomes a grid column with up
+    to three stacked cells on fixed rows so columns align: heading (row 0), a
+    visual (row 1), body text (row 2)."""
+    cols = content.get("columns") or []
+    cells: list[dict] = []
+    for c, col in enumerate(cols):
+        if not isinstance(col, dict):
+            continue
+        if col.get("heading"):
+            cells.append({"block": "text", "data": {"heading": col["heading"]},
+                          "col": c, "row": 0})
+        # one visual per column (first match wins)
+        if col.get("chart"):
+            cells.append({"block": "chart", "data": {"chart": col["chart"]}, "col": c, "row": 1})
+        elif col.get("table"):
+            cells.append({"block": "table", "data": col["table"], "col": c, "row": 1})
+        elif col.get("kpi"):
+            cells.append({"block": "kpi", "data": col["kpi"], "col": c, "row": 1})
+        elif col.get("image"):
+            cells.append({"block": "image", "data": col["image"], "col": c, "row": 1})
+        elif col.get("waterfall"):
+            cells.append({"block": "waterfall", "data": {"waterfall": col["waterfall"]}, "col": c, "row": 1})
+        elif col.get("treemap"):
+            cells.append({"block": "treemap", "data": {"treemap": col["treemap"]}, "col": c, "row": 1})
+        # body text
+        if col.get("bullets"):
+            cells.append({"block": "text", "data": {"bullets": col["bullets"]}, "col": c, "row": 2})
+        elif col.get("text"):
+            txt = col["text"]
+            cells.append({"block": "text",
+                          "data": {"paragraphs": [txt] if isinstance(txt, str) else txt},
+                          "col": c, "row": 2})
+    new_content: dict[str, Any] = {"title": content.get("title", "")}
+    if content.get("footnote"):
+        new_content["footnote"] = content["footnote"]
+    new_content["compose"] = {"grid": {"cols": max(1, len(cols)), "cells": cells}}
+    return {"intent": "compose", "content": new_content}
+
+
+_MACROS = {"columns_layout": _macro_columns_layout}
+
+
 def _render(deck_spec: dict) -> dict:
+    deck_spec = _expand_macros(deck_spec)          # convenience macros → real intents
     with tempfile.TemporaryDirectory() as td:
         out = Path(td) / "deck.pptx"
         gate_path = Path(td) / "gate_result.json"
@@ -235,12 +302,140 @@ def _one_slide(ag, system: str, user: str, language, audience):
         print("[/agent] one-slide came out BLANK — retrying with guidance", flush=True)
         retry = (user + "\n\nYour previous slide rendered COMPLETELY BLANK: the "
                  "content keys were wrong for the intent and got dropped. Use a "
-                 "VALID structure for the intent (for multi-column-with-charts use "
-                 "a compose grid of cells, never a 'columns' key) and return the "
-                 "corrected slide.")
+                 "VALID structure (for multi-column-with-visuals use the "
+                 "columns_layout intent) and return the corrected slide.")
         slide = ag.call_claude(system, retry)
         result = _render_single(slide, language, audience)
     return slide, result
+
+
+# ---------------------------------------------------------------------------
+# Slide-by-slide generation: fix the structure (storyline), then fill each
+# slide in its own focused, parallel call. Smaller per-call schema surface →
+# far fewer mistakes; failing slides are rebuilt individually.
+# ---------------------------------------------------------------------------
+def _resolve_storyline(ag, prompt, storyline, language, audience):
+    items = None
+    if isinstance(storyline, list):
+        items = storyline
+    elif isinstance(storyline, dict):
+        items = storyline.get("storyline") or storyline.get("slides")
+        language = language or storyline.get("language")
+        audience = audience or storyline.get("audience")
+    if not items:
+        user = f"Brief: {prompt}\n"
+        if language:
+            user += f"language: {language}\n"
+        if audience:
+            user += f"audience: {audience}\n"
+        s = ag.call_claude(ag.SYSTEM_STORYLINE, user)
+        items = (s.get("storyline") if isinstance(s, dict) else s) or []
+        if isinstance(s, dict):
+            language = language or s.get("language")
+            audience = audience or s.get("audience")
+    norm = [{"intent": it.get("intent", "explain"), "title": it.get("title", ""),
+             "note": it.get("note", "")}
+            for it in items if isinstance(it, dict)]
+    return norm, language, audience
+
+
+def _fill_one(ag, item, prompt, language, audience, fix=None):
+    user = ("Produce EXACTLY ONE slide for this outline entry.\n"
+            f"intent: {item['intent']}\n"
+            f"action title (use it; you may refine wording): {item['title']}\n"
+            f"what it should contain: {item.get('note', '')}\n"
+            f"deck brief, for context: {prompt}\n")
+    if language:
+        user += f"language: {language}\n"
+    if audience:
+        user += f"audience: {audience}\n"
+    if fix:
+        user += f"\nYour previous version of THIS slide was rejected:\n{fix}\nReturn a corrected slide."
+    return ag.call_claude(ag.SYSTEM_GENERATE_SLIDE, user)
+
+
+def _fill_all(ag, items, prompt, language, audience, fixes=None, indices=None):
+    """Fill slides in parallel. indices (0-based) limits which slides to fill —
+    used by repair to rebuild ONLY the failing ones. Others stay None."""
+    import concurrent.futures as cf
+    fixes = fixes or {}
+    todo = list(indices) if indices is not None else list(range(len(items)))
+    out: list = [None] * len(items)
+    if not todo:
+        return out
+    with cf.ThreadPoolExecutor(max_workers=min(6, len(todo))) as ex:
+        futs = {ex.submit(_fill_one, ag, items[i], prompt, language, audience, fixes.get(i)): i
+                for i in todo}
+        for f in cf.as_completed(futs):
+            out[futs[f]] = f.result()
+    return out
+
+
+def _failing_indices(result) -> dict:
+    """Map 0-based slide index -> feedback string, from the gate's hard fails
+    (which name 'slide N') plus blank-slide detection."""
+    import re
+    gate = result["gate_result"]
+    fb: dict[int, list[str]] = {}
+    for name, chk in (gate.get("checks") or {}).items():
+        if chk.get("severity") == "hard" and not chk.get("passed"):
+            for item in chk.get("fail_items", []):
+                m = re.search(r"slide (\d+)", item)
+                if m:
+                    fb.setdefault(int(m.group(1)) - 1, []).append(f"[{name}] {item}")
+    for i in _empty_slides(result["pptx_base64"]):
+        fb.setdefault(i - 1, []).append(
+            "[blank] rendered EMPTY — the content keys were wrong for the intent; "
+            "rebuild with a valid structure (columns_layout for multi-column).")
+    return {i: "\n".join(v) for i, v in fb.items() if i >= 0}
+
+
+def _generate_deck(ag, prompt, storyline, language, audience):
+    """Two-stage deck build: storyline → parallel per-slide content → render.
+    On failure, rebuild only the failing slides (when indices are mappable) or
+    fall back to one whole-deck repair."""
+    items, language, audience = _resolve_storyline(ag, prompt, storyline, language, audience)
+    if not items:                                    # storyline empty → single shot
+        spec = ag.call_claude(ag.SYSTEM_GENERATE, f"Brief: {prompt}\n")
+        return spec, _render(spec), 1
+
+    slides = [s for s in _fill_all(ag, items, prompt, language, audience) if isinstance(s, dict)]
+    deck: dict[str, Any] = {"slides": slides}
+    if language:
+        deck["language"] = language
+    if audience:
+        deck["audience"] = audience
+    result = _render(deck)
+    attempts = 1
+
+    if result["slide_count"] == len(slides):         # no overflow split → per-slide repair
+        fails = {i: v for i, v in _failing_indices(result).items() if 0 <= i < len(slides)}
+        if fails:
+            print(f"[generate] per-slide repair of slides {sorted(k + 1 for k in fails)}", flush=True)
+            fixed = _fill_all(ag, items, prompt, language, audience,
+                              fixes=fails, indices=list(fails))
+            for i in fails:
+                if isinstance(fixed[i], dict):
+                    slides[i] = fixed[i]
+            deck["slides"] = slides
+            result = _render(deck)
+            attempts = 2
+    else:                                            # split happened → whole-deck repair
+        gate = result["gate_result"]
+        empty = _empty_slides(result["pptx_base64"])
+        if not gate["passed"] or empty:
+            fb = _gate_feedback(gate)
+            if empty:
+                fb += "\nBLANK SLIDES: " + ", ".join(map(str, empty))
+            repair = (f"Brief: {prompt}\n" + (f"language: {language}\n" if language else "")
+                      + "\nYou previously produced this deck:\n"
+                      + json.dumps(deck, ensure_ascii=False)
+                      + "\n\nIt was REJECTED. Fix EVERY item and return the COMPLETE "
+                      "corrected deck_spec:\n" + fb)
+            deck = ag.call_claude(ag.SYSTEM_GENERATE, repair)
+            result = _render(deck)
+            attempts = 2
+    return deck, result, attempts
 
 
 @app.post("/agent")
@@ -258,39 +453,12 @@ def agent(req: AgentRequest):
             return {"storyline": ag.call_claude(ag.SYSTEM_STORYLINE, user)}
 
         if req.mode == "generate":
-            if req.storyline:
-                user = ("Confirmed storyline (build the full deck from it):\n"
-                        f"{req.storyline}\n")
-            else:
-                user = f"Brief: {req.prompt}\n"
-            if req.language:
-                user += f"language: {req.language}\n"
-            if req.audience:
-                user += f"audience: {req.audience}\n"
-            spec = ag.call_claude(ag.SYSTEM_GENERATE, user)
-            result = _render(spec)
-            # Self-repair: rebuild while the gate blocks OR a slide came out
-            # blank (the empty-canvas gap the gate misses), up to 2 attempts.
-            attempts = 1
-            while attempts < 2:
-                gate = result["gate_result"]
-                empty = _empty_slides(result["pptx_base64"])
-                print(f"[gate attempt {attempts}] passed={gate['passed']} "
-                      f"score={gate['overall_score']} empty_slides={empty}", flush=True)
-                if gate["passed"] and not empty:
-                    break
-                fb = _gate_feedback(gate)
-                if empty:
-                    fb += ("\nBLANK SLIDES (rendered empty — wrong content keys "
-                           "were dropped; rebuild these with a valid structure "
-                           "for their intent): slides " + ", ".join(map(str, empty)))
-                repair = (user + "\n\nYou previously produced this deck:\n"
-                          + json.dumps(spec, ensure_ascii=False)
-                          + "\n\nIt was REJECTED. Fix EVERY item below and return the "
-                          "COMPLETE corrected deck_spec (keep what already passed):\n" + fb)
-                spec = ag.call_claude(ag.SYSTEM_GENERATE, repair)
-                result = _render(spec)
-                attempts += 1
+            spec, result, attempts = _generate_deck(
+                ag, req.prompt, req.storyline, req.language, req.audience)
+            print(f"[generate] done attempts={attempts} "
+                  f"passed={result['gate_result']['passed']} "
+                  f"score={result['gate_result']['overall_score']} "
+                  f"empty={_empty_slides(result['pptx_base64'])}", flush=True)
             return {"spec": spec, **result, "attempts": attempts,
                     "empty_slides": _empty_slides(result["pptx_base64"])}
 
