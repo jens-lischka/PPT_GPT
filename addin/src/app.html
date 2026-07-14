@@ -74,6 +74,7 @@
       <div id="createGate"></div>
     </section>
 
+    <div id="status" class="muted"></div>
     <div id="log">ready.</div>
   </main>
 
@@ -117,7 +118,29 @@
     const s15 = Office.context.requirements.isSetSupported("PowerPointApi", "1.5");
     log("ready — host " + Office.context.host + " · PowerPointApi 1.5: " + s15);
     if (!s15) log("⚠ selection/tags/replace need PowerPointApi 1.5 — some features will be limited.");
+    keepWarm(); setInterval(keepWarm, 240000);     // keep the renderer awake while the pane is open
   });
+
+  // ---------- keep-warm: ping /healthz so the free-tier cold start (30–50s)
+  // never lands on a real click. Derived from the backend URL. ----------
+  const healthUrl = () => cfg.edgeUrl ? cfg.edgeUrl.replace(/\/agent\/?$/, "/healthz") : null;
+  function keepWarm() { const u = healthUrl(); if (u) fetch(u).catch(() => {}); }
+
+  // ---------- live elapsed-time + stage indicator ("show actions") ----------
+  let _timer = null;
+  async function withTimer(stage, fn) {
+    const t0 = Date.now();
+    const tick = () => { $("status").textContent = `⏳ ${stage} … ${Math.round((Date.now() - t0) / 1000)}s`; };
+    tick(); _timer = setInterval(tick, 1000);
+    try {
+      const r = await fn();
+      $("status").textContent = `✓ ${stage} — ${((Date.now() - t0) / 1000).toFixed(1)}s`;
+      return r;
+    } catch (e) {
+      $("status").textContent = `✕ ${stage} failed after ${((Date.now() - t0) / 1000).toFixed(1)}s`;
+      throw e;
+    } finally { clearInterval(_timer); }
+  }
 
   // ---------- backend ----------
   async function callEdge(payload) {
@@ -206,8 +229,7 @@
   $("btnStoryline").onclick = guarded(async () => {
     const prompt = $("prompt").value.trim();
     if (!prompt) return log("enter a brief first.");
-    log("drafting storyline…");
-    const d = await callEdge({ mode: "storyline", prompt });
+    const d = await withTimer("storyline (Claude)", () => callEdge({ mode: "storyline", prompt }));
     storyline = d.storyline?.storyline || d.storyline;   // {title,language,audience,storyline:[...]}
     const items = storyline.storyline || storyline;
     $("storylineBox").innerHTML = `<p class="muted">${storyline.title || ""} · ${items.length} slides</p>` +
@@ -218,8 +240,8 @@
   });
 
   $("btnGenerate").onclick = guarded(async () => {
-    log("building deck (render + gate)… this can take 1–3 min.");
-    const d = await callEdge({ mode: "generate", storyline: storyline, prompt: $("prompt").value.trim() });
+    const d = await withTimer("building deck (Claude, slide-by-slide)",
+      () => callEdge({ mode: "generate", storyline: storyline, prompt: $("prompt").value.trim() }));
     deckSpec = d.spec; deckPptx = d.pptx_base64; deckSpec._persisted = d.persisted || null;
     const ok = showGate($("genGate"), d.gate_result);
     $("btnInsertDeck").disabled = !ok;
@@ -231,7 +253,7 @@
   $("btnInsertDeck").onclick = guarded(async () => {
     const persisted = deckSpec._persisted;
     const uuids = deckSpec.slides.map((_, i) => persisted?.slides?.[i]?.slide_uuid || crypto.randomUUID());
-    const created = await insertDeckTagged(deckPptx, uuids);
+    const created = await withTimer("inserting deck", () => insertDeckTagged(deckPptx, uuids));
     for (let i = 0; i < created.length; i++)
       specStore[uuids[i]] = { spec: deckSpec.slides[i], deck_id: persisted?.deck_id || null };
     saveSpecs();
@@ -255,14 +277,13 @@
     if (!target.uuid || !specStore[target.uuid])
       return log("this slide isn't tracked (created outside the pane). Adopting foreign slides is Phase 3.");
     const rec = specStore[target.uuid];
-    log("editing slide…");
-    const d = await callEdge({ mode: "edit_slide", slide_spec: rec.spec, command: cmd,
-      deck_id: rec.deck_id, slide_uuid: target.uuid });
+    const d = await withTimer("editing slide (Claude)", () => callEdge({ mode: "edit_slide",
+      slide_spec: rec.spec, command: cmd, deck_id: rec.deck_id, slide_uuid: target.uuid }));
     const ok = showGate($("editGate"), d.gate_result);
     if (!ok) return log("gate FAILED — slide not replaced.");
     if (d.empty_slides?.length) return log("the edited slide came out blank or missing a chart/table you asked for — slide NOT replaced. Rephrase and try again.");
     // regenerate-and-replace in one round-trip: insert after old, tag, delete old
-    const newId = await insertOne(d.pptx_base64, target.id, target.uuid, target.id);
+    const newId = await withTimer("replacing slide", () => insertOne(d.pptx_base64, target.id, target.uuid, target.id));
     if (!newId) return log("insert produced no new slide — old slide kept, nothing changed.");
     specStore[target.uuid] = { spec: d.spec, deck_id: rec.deck_id }; saveSpecs();
     log("slide replaced ✓");
@@ -272,13 +293,12 @@
     const prompt = $("newSlide").value.trim(); if (!prompt) return log("describe the new slide.");
     const sel = await getSelected();
     const after = sel[0]?.id || null;
-    log("creating slide…");
-    const d = await callEdge({ mode: "generate_slide", prompt });
+    const d = await withTimer("new slide (Claude)", () => callEdge({ mode: "generate_slide", prompt }));
     const ok = showGate($("createGate"), d.gate_result);
     if (!ok) return log("gate FAILED — slide not inserted.");
     if (d.empty_slides?.length) return log("the new slide came out blank or missing a chart/table you asked for — not inserted. Rephrase and try again.");
     const uuid = crypto.randomUUID();
-    const newId = await insertOne(d.pptx_base64, after, uuid, null);
+    const newId = await withTimer("inserting slide", () => insertOne(d.pptx_base64, after, uuid, null));
     if (!newId) return log("insert produced no new slide.");
     specStore[uuid] = { spec: d.spec, deck_id: null }; saveSpecs();
     log("slide created ✓");

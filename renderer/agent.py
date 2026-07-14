@@ -22,7 +22,12 @@ from typing import Any
 
 import httpx
 
+# Two tiers: a FAST model for the happy path (focused single-slide / storyline
+# tasks) and a STRONG model we escalate to only when a slide fails and must be
+# repaired. Fast-first + escalate-on-failure = low latency without losing the
+# reliability the gate/detectors demand. Override via env.
 MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-opus-4-8")
+MODEL_FAST = os.environ.get("ANTHROPIC_MODEL_FAST", "claude-haiku-4-5-20251001")
 
 INTENT_REFERENCE = """
 You author decks for the OW (Oliver Wyman) deck runtime. A deck is JSON:
@@ -216,14 +221,15 @@ def _extract_json(raw: str) -> Any:
     raise ValueError(f"unbalanced JSON in model output: {t[:200]}")
 
 
-def _messages(system: str, user_text: str, max_tokens: int, thinking: bool) -> str:
+def _messages(system: str, user_text: str, max_tokens: int, thinking: bool,
+              model: str) -> str:
     """One Anthropic Messages call; returns the concatenated text blocks.
     Retries transient overload/rate-limit (429/500/529) with fixed backoff."""
     api_key = os.environ.get("ANTHROPIC_API_KEY")
     if not api_key:
         raise RuntimeError("ANTHROPIC_API_KEY is not set")
     payload: dict[str, Any] = {
-        "model": MODEL,
+        "model": model,
         "max_tokens": max_tokens,
         "system": [{"type": "text", "text": system,
                     "cache_control": {"type": "ephemeral"}}],
@@ -254,10 +260,14 @@ def _messages(system: str, user_text: str, max_tokens: int, thinking: bool) -> s
 
 
 def call_claude(system: str, user_text: str, *, max_tokens: int = 16000,
-                thinking: bool = True) -> Any:
-    """Call Claude and return parsed JSON. If the model returns unparseable
-    JSON, retry ONCE with an explicit strict-JSON instruction before failing."""
-    text = _messages(system, user_text, max_tokens, thinking)
+                thinking: bool = True, fast: bool = False) -> Any:
+    """Call Claude and return parsed JSON. fast=True uses the fast model with
+    thinking off (the happy path). If the model returns unparseable JSON, retry
+    ONCE with an explicit strict-JSON instruction before failing."""
+    model = MODEL_FAST if fast else MODEL
+    if fast:
+        thinking = False
+    text = _messages(system, user_text, max_tokens, thinking, model)
     try:
         return _extract_json(text)
     except (json.JSONDecodeError, ValueError):
@@ -265,5 +275,5 @@ def call_claude(system: str, user_text: str, *, max_tokens: int = 16000,
                   "with STRICT JSON ONLY: double-quoted keys and string values, no "
                   "comments, no trailing commas, no ellipses (…), no prose, no "
                   "markdown fences.")
-        text = _messages(system, strict, max_tokens, thinking)
+        text = _messages(system, strict, max_tokens, thinking, model)
         return _extract_json(text)

@@ -20,6 +20,8 @@ services:
       - key: ALLOWED_ORIGINS
         value: "*"                # test phase: allow any origin; tighten for prod
       - key: ANTHROPIC_MODEL
-        value: claude-opus-4-8
+        value: claude-opus-4-8            # strong model — used only on repair/escalation
+      - key: ANTHROPIC_MODEL_FAST
+        value: claude-haiku-4-5-20251001  # fast model — the happy path (edits, per-slide)
       - key: ANTHROPIC_API_KEY
         sync: false            # set in the Render dashboard, never committed
