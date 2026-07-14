@@ -39,6 +39,11 @@
         <div><label>Language (BCP-47)</label><input id="language" placeholder="de-DE" /></div>
         <div><label>Audience</label><input id="audience" placeholder="board" /></div>
       </div>
+      <label>Design when inserting</label>
+      <select id="formatting">
+        <option value="destination">Match presentation theme — start from ow_default.pptx (recommended, no master bloat)</option>
+        <option value="source">Bring OW design with each slide — works in any presentation (can bloat masters)</option>
+      </select>
       <button class="secondary" id="saveCfg">Save</button>
     </details>
 
@@ -92,13 +97,20 @@
     Object.assign(cfg, JSON.parse(localStorage.getItem("ow_cfg") || "{}"));
     $("edgeUrl").value = cfg.edgeUrl || ""; $("anonKey").value = cfg.anonKey || "";
     $("language").value = cfg.language || ""; $("audience").value = cfg.audience || "";
+    $("formatting").value = cfg.formatting || "destination";
   }
   $("saveCfg").onclick = () => {
     Object.assign(cfg, { edgeUrl: $("edgeUrl").value.trim(), anonKey: $("anonKey").value.trim(),
-      language: $("language").value.trim(), audience: $("audience").value.trim() });
+      language: $("language").value.trim(), audience: $("audience").value.trim(),
+      formatting: $("formatting").value });
     localStorage.setItem("ow_cfg", JSON.stringify(cfg));
     log("settings saved.");
   };
+  // Insert formatting: destination theme (no master bloat; start from OW
+  // template) vs keep source (OW design travels with each slide, may bloat).
+  const insertFmt = () => cfg.formatting === "source"
+    ? PowerPoint.InsertSlideFormatting.keepSourceFormatting
+    : PowerPoint.InsertSlideFormatting.useDestinationTheme;
 
   Office.onReady(() => {
     loadCfg();
@@ -143,32 +155,41 @@
     const slides = ctx.presentation.slides; slides.load("items/id"); await ctx.sync();
     return slides.items.map((s) => s.id);
   }
-  // insert a base64 deck, optionally after targetId; return the new slides' ids in order.
-  async function insertReturningIds(b64, targetId) {
+  // Insert a whole deck at the end and tag each new slide with uuids[i], in ONE
+  // Office round-trip. Returns the new slide ids in presentation order.
+  async function insertDeckTagged(b64, uuids) {
     let created = [];
     await PowerPoint.run(async (ctx) => {
       const before = new Set(await slideIds(ctx));
-      // KeepSourceFormatting: the rendered deck is already built on the OW
-      // template, so keep ITS theme/layouts instead of remapping onto whatever
-      // presentation happens to be open (which breaks colours + layouts).
-      const opts = { formatting: PowerPoint.InsertSlideFormatting.keepSourceFormatting };
-      if (targetId) opts.targetSlideId = targetId;
-      ctx.presentation.insertSlidesFromBase64(b64, opts);
+      ctx.presentation.insertSlidesFromBase64(b64, { formatting: insertFmt() });
       await ctx.sync();
-      created = (await slideIds(ctx)).filter((id) => !before.has(id));  // presentation order
+      created = (await slideIds(ctx)).filter((id) => !before.has(id));
+      created.forEach((id, i) => {
+        if (uuids[i]) ctx.presentation.slides.getItem(id).tags.add("OW_SLIDE_UUID", uuids[i]);
+      });
+      await ctx.sync();
     });
     return created;
   }
-  async function tagSlide(slideId, uuid) {
+  // Insert ONE slide after afterId (or at end), tag it, and optionally delete
+  // deleteId (regenerate-and-replace) — all in ONE round-trip to shrink the
+  // window where a web crash could leave a half-applied state. Returns new id.
+  async function insertOne(b64, afterId, uuid, deleteId) {
+    let newId = null;
     await PowerPoint.run(async (ctx) => {
-      const s = ctx.presentation.slides.getItem(slideId);
-      s.tags.add("OW_SLIDE_UUID", uuid); await ctx.sync();
+      const before = new Set(await slideIds(ctx));
+      const opts = { formatting: insertFmt() };
+      if (afterId) opts.targetSlideId = afterId;
+      ctx.presentation.insertSlidesFromBase64(b64, opts);
+      await ctx.sync();
+      newId = (await slideIds(ctx)).filter((id) => !before.has(id))[0] || null;
+      if (newId) {
+        ctx.presentation.slides.getItem(newId).tags.add("OW_SLIDE_UUID", uuid);
+        if (deleteId) ctx.presentation.slides.getItem(deleteId).delete();
+      }
+      await ctx.sync();
     });
-  }
-  async function deleteSlide(slideId) {
-    await PowerPoint.run(async (ctx) => {
-      ctx.presentation.slides.getItem(slideId).delete(); await ctx.sync();
-    });
+    return newId;
   }
   async function getSelected() {
     let out = [];
@@ -208,13 +229,11 @@
   });
 
   $("btnInsertDeck").onclick = guarded(async () => {
-    const created = await insertReturningIds(deckPptx, null);
     const persisted = deckSpec._persisted;
-    for (let i = 0; i < created.length; i++) {
-      const uuid = persisted?.slides?.[i]?.slide_uuid || crypto.randomUUID();
-      await tagSlide(created[i], uuid);
-      specStore[uuid] = { spec: deckSpec.slides[i], deck_id: persisted?.deck_id || null };
-    }
+    const uuids = deckSpec.slides.map((_, i) => persisted?.slides?.[i]?.slide_uuid || crypto.randomUUID());
+    const created = await insertDeckTagged(deckPptx, uuids);
+    for (let i = 0; i < created.length; i++)
+      specStore[uuids[i]] = { spec: deckSpec.slides[i], deck_id: persisted?.deck_id || null };
     saveSpecs();
     log(`inserted & tagged ${created.length} slides.`);
     $("btnInsertDeck").disabled = true;
@@ -242,12 +261,10 @@
     const ok = showGate($("editGate"), d.gate_result);
     if (!ok) return log("gate FAILED — slide not replaced.");
     if (d.empty_slides?.length) return log("the edited slide rendered blank — slide NOT replaced. Rephrase the command and try again.");
-    // regenerate-and-replace: insert after old, tag with same uuid, delete old
-    const created = await insertReturningIds(d.pptx_base64, target.id);
-    if (!created.length) return log("insert produced no new slide — old slide kept, nothing changed.");
-    await tagSlide(created[0], target.uuid);
+    // regenerate-and-replace in one round-trip: insert after old, tag, delete old
+    const newId = await insertOne(d.pptx_base64, target.id, target.uuid, target.id);
+    if (!newId) return log("insert produced no new slide — old slide kept, nothing changed.");
     specStore[target.uuid] = { spec: d.spec, deck_id: rec.deck_id }; saveSpecs();
-    await deleteSlide(target.id);
     log("slide replaced ✓");
   });
 
@@ -260,10 +277,9 @@
     const ok = showGate($("createGate"), d.gate_result);
     if (!ok) return log("gate FAILED — slide not inserted.");
     if (d.empty_slides?.length) return log("the new slide rendered blank — not inserted. Rephrase and try again.");
-    const created = await insertReturningIds(d.pptx_base64, after);
-    if (!created.length) return log("insert produced no new slide.");
     const uuid = crypto.randomUUID();
-    await tagSlide(created[0], uuid);
+    const newId = await insertOne(d.pptx_base64, after, uuid, null);
+    if (!newId) return log("insert produced no new slide.");
     specStore[uuid] = { spec: d.spec, deck_id: null }; saveSpecs();
     log("slide created ✓");
   });
