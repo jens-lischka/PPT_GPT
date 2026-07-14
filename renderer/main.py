@@ -232,11 +232,15 @@ def agent(req: AgentRequest):
                 user += f"audience: {req.audience}\n"
             spec = ag.call_claude(ag.SYSTEM_GENERATE, user)
             result = _render(spec)
+            print(f"[gate attempt 1] passed={result['gate_result']['passed']} "
+                  f"score={result['gate_result']['overall_score']}\n"
+                  f"{_gate_feedback(result['gate_result'])}", flush=True)
             # Self-repair: the gate is non-overridable, so on a fail we feed the
             # exact failing items back to the model and rebuild, up to 2 retries.
             attempts = 1
             while not result["gate_result"]["passed"] and attempts < 2:
                 fb = _gate_feedback(result["gate_result"])
+                print(f"[gate attempt {attempts+1}] repairing with feedback:\n{fb}", flush=True)
                 repair = (user + "\n\nYou previously produced this deck:\n"
                           + json.dumps(spec, ensure_ascii=False)
                           + "\n\nA deterministic quality gate BLOCKED it. Fix EVERY "
