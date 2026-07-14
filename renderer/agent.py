@@ -165,12 +165,25 @@ Rules:
 - Obey the content-key traps and voice rules. Keep all required keys valid."""
 
 
+def _relaxed_loads(s: str) -> Any:
+    """json.loads, but tolerant of the usual LLM slips: // and /* */ comments
+    and trailing commas before } or ]."""
+    try:
+        return json.loads(s)
+    except json.JSONDecodeError:
+        pass
+    cleaned = re.sub(r"/\*.*?\*/", "", s, flags=re.S)
+    cleaned = re.sub(r"(?m)//[^\n]*", "", cleaned)
+    cleaned = re.sub(r",(\s*[}\]])", r"\1", cleaned)
+    return json.loads(cleaned)
+
+
 def _extract_json(raw: str) -> Any:
     t = raw.strip()
     t = re.sub(r"^```(?:json)?", "", t, flags=re.I).strip()
     t = re.sub(r"```$", "", t).strip()
     try:
-        return json.loads(t)
+        return _relaxed_loads(t)
     except json.JSONDecodeError:
         pass
     m = re.search(r"[\[{]", t)
@@ -199,13 +212,13 @@ def _extract_json(raw: str) -> Any:
         elif c == close_c:
             depth -= 1
             if depth == 0:
-                return json.loads(t[start:i + 1])
+                return _relaxed_loads(t[start:i + 1])
     raise ValueError(f"unbalanced JSON in model output: {t[:200]}")
 
 
-def call_claude(system: str, user_text: str, *, max_tokens: int = 16000,
-                thinking: bool = True) -> Any:
-    """Call Anthropic Messages API and return the parsed JSON payload."""
+def _messages(system: str, user_text: str, max_tokens: int, thinking: bool) -> str:
+    """One Anthropic Messages call; returns the concatenated text blocks.
+    Retries transient overload/rate-limit (429/500/529) with fixed backoff."""
     api_key = os.environ.get("ANTHROPIC_API_KEY")
     if not api_key:
         raise RuntimeError("ANTHROPIC_API_KEY is not set")
@@ -219,31 +232,38 @@ def call_claude(system: str, user_text: str, *, max_tokens: int = 16000,
     if thinking:
         payload["thinking"] = {"type": "adaptive"}
         payload["output_config"] = {"effort": "medium"}
-    # Retry transient overload/rate-limit (429/500/529) — parallel per-slide
-    # calls make these more likely. Fixed backoff (no RNG in this runtime).
     import time
     last = None
     for attempt in range(4):
         resp = httpx.post(
             "https://api.anthropic.com/v1/messages",
-            headers={
-                "content-type": "application/json",
-                "x-api-key": api_key,
-                "anthropic-version": "2023-06-01",
-            },
-            json=payload,
-            timeout=120.0,
+            headers={"content-type": "application/json", "x-api-key": api_key,
+                     "anthropic-version": "2023-06-01"},
+            json=payload, timeout=120.0,
         )
         if resp.status_code == 200:
-            break
+            data = resp.json()
+            return "\n".join(b["text"] for b in data.get("content", [])
+                             if b.get("type") == "text")
         last = f"Claude {resp.status_code}: {resp.text}"
         if resp.status_code in (429, 500, 529) and attempt < 3:
             time.sleep(2 * (attempt + 1))
             continue
         raise RuntimeError(last)
-    else:
-        raise RuntimeError(last or "Claude: exhausted retries")
-    data = resp.json()
-    text = "\n".join(b["text"] for b in data.get("content", [])
-                     if b.get("type") == "text")
-    return _extract_json(text)
+    raise RuntimeError(last or "Claude: exhausted retries")
+
+
+def call_claude(system: str, user_text: str, *, max_tokens: int = 16000,
+                thinking: bool = True) -> Any:
+    """Call Claude and return parsed JSON. If the model returns unparseable
+    JSON, retry ONCE with an explicit strict-JSON instruction before failing."""
+    text = _messages(system, user_text, max_tokens, thinking)
+    try:
+        return _extract_json(text)
+    except (json.JSONDecodeError, ValueError):
+        strict = (user_text + "\n\nYour previous reply was NOT valid JSON. Reply "
+                  "with STRICT JSON ONLY: double-quoted keys and string values, no "
+                  "comments, no trailing commas, no ellipses (…), no prose, no "
+                  "markdown fences.")
+        text = _messages(system, strict, max_tokens, thinking)
+        return _extract_json(text)
