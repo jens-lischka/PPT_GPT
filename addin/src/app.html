@@ -141,7 +141,10 @@
     let created = [];
     await PowerPoint.run(async (ctx) => {
       const before = new Set(await slideIds(ctx));
-      const opts = { formatting: PowerPoint.InsertSlideFormatting.useDestinationTheme };
+      // KeepSourceFormatting: the rendered deck is already built on the OW
+      // template, so keep ITS theme/layouts instead of remapping onto whatever
+      // presentation happens to be open (which breaks colours + layouts).
+      const opts = { formatting: PowerPoint.InsertSlideFormatting.keepSourceFormatting };
       if (targetId) opts.targetSlideId = targetId;
       ctx.presentation.insertSlidesFromBase64(b64, opts);
       await ctx.sync();
