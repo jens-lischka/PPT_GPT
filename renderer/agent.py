@@ -71,6 +71,21 @@ CONTENT-KEY TRAPS (these break silently — obey exactly):
   renders an empty chart.
 - dashboard wants "metrics"; stat_callout wants "stats".
 
+MULTI-COLUMN-WITH-VISUALS (e.g. "N columns, each with a header, a chart and a
+paragraph"): this is NOT show_columns (text only). Use compose with a grid —
+one column per grid column, three stacked cells each:
+{ "intent":"compose", "content":{ "title":"…", "footnote":"Source: …",
+  "compose":{ "grid":{ "cols":N, "cells":[
+    {"block":"text","data":{"heading":"Region A"},"col":0,"row":0},
+    {"block":"chart","data":{"chart":{"type":"column","categories":["FY24","FY25"],
+       "series":[{"name":"Region A","values":[100,120]}]}},"col":0,"row":1},
+    {"block":"text","data":{"paragraphs":["One-line takeaway."]},"col":0,"row":2},
+    … repeat for col:1 … col:N-1 …
+  ]}}}}
+Every cell MUST have "block" and "data". NEVER put a "columns" key inside
+compose — compose only understands grid / rows / regions. A wrong key renders a
+BLANK slide.
+
 DO NOT use scatter/XY charts unless explicitly asked (data labels unsupported).
 
 VOICE (enforced by a non-overridable gate — violations block the deck):

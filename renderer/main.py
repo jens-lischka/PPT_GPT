@@ -124,6 +124,26 @@ def _slide_count(pptx_path: Path) -> int:
     return len(Presentation(str(pptx_path)).slides)
 
 
+def _empty_slides(pptx_b64: str) -> list[int]:
+    """1-based indices of slides that rendered with NO body content — catches
+    the empty-canvas gap (a compose/canvas spec the renderer silently dropped
+    because of wrong keys) that the deterministic gate does not flag."""
+    import io
+    from pptx import Presentation
+    prs = Presentation(io.BytesIO(base64.b64decode(pptx_b64)))
+    empty = []
+    for i, s in enumerate(prs.slides, 1):
+        n = 0
+        for sh in s.shapes:
+            center = ((sh.top or 0) + (sh.height or 0) / 2) / 914400
+            rich = sh.has_chart or sh.has_table or sh.shape_type == 13
+            if rich or (1.4 < center < 6.2):
+                n += 1
+        if n == 0:
+            empty.append(i)
+    return empty
+
+
 def _gate_feedback(gate: dict) -> str:
     """Render the gate's failing items as a fix list for the repair prompt.
     Hard fails block; warns only lower the score — list hard first, clearly."""
@@ -206,6 +226,23 @@ def _render_single(slide_spec: dict, language: str | None, audience: str | None)
     return _render(deck)
 
 
+def _one_slide(ag, system: str, user: str, language, audience):
+    """Render one slide; if it comes out blank (empty-canvas gap), rebuild once
+    with an explicit instruction. Returns (slide_spec, render_result)."""
+    slide = ag.call_claude(system, user)
+    result = _render_single(slide, language, audience)
+    if _empty_slides(result["pptx_base64"]):
+        print("[/agent] one-slide came out BLANK — retrying with guidance", flush=True)
+        retry = (user + "\n\nYour previous slide rendered COMPLETELY BLANK: the "
+                 "content keys were wrong for the intent and got dropped. Use a "
+                 "VALID structure for the intent (for multi-column-with-charts use "
+                 "a compose grid of cells, never a 'columns' key) and return the "
+                 "corrected slide.")
+        slide = ag.call_claude(system, retry)
+        result = _render_single(slide, language, audience)
+    return slide, result
+
+
 @app.post("/agent")
 def agent(req: AgentRequest):
     """Claude-driven generation/edit collapsed into the renderer service (test
@@ -232,24 +269,30 @@ def agent(req: AgentRequest):
                 user += f"audience: {req.audience}\n"
             spec = ag.call_claude(ag.SYSTEM_GENERATE, user)
             result = _render(spec)
-            print(f"[gate attempt 1] passed={result['gate_result']['passed']} "
-                  f"score={result['gate_result']['overall_score']}\n"
-                  f"{_gate_feedback(result['gate_result'])}", flush=True)
-            # Self-repair: the gate is non-overridable, so on a fail we feed the
-            # exact failing items back to the model and rebuild, up to 2 retries.
+            # Self-repair: rebuild while the gate blocks OR a slide came out
+            # blank (the empty-canvas gap the gate misses), up to 2 attempts.
             attempts = 1
-            while not result["gate_result"]["passed"] and attempts < 2:
-                fb = _gate_feedback(result["gate_result"])
-                print(f"[gate attempt {attempts+1}] repairing with feedback:\n{fb}", flush=True)
+            while attempts < 2:
+                gate = result["gate_result"]
+                empty = _empty_slides(result["pptx_base64"])
+                print(f"[gate attempt {attempts}] passed={gate['passed']} "
+                      f"score={gate['overall_score']} empty_slides={empty}", flush=True)
+                if gate["passed"] and not empty:
+                    break
+                fb = _gate_feedback(gate)
+                if empty:
+                    fb += ("\nBLANK SLIDES (rendered empty — wrong content keys "
+                           "were dropped; rebuild these with a valid structure "
+                           "for their intent): slides " + ", ".join(map(str, empty)))
                 repair = (user + "\n\nYou previously produced this deck:\n"
                           + json.dumps(spec, ensure_ascii=False)
-                          + "\n\nA deterministic quality gate BLOCKED it. Fix EVERY "
-                          "item below and return the COMPLETE corrected deck_spec "
-                          "(keep what already passed):\n" + fb)
+                          + "\n\nIt was REJECTED. Fix EVERY item below and return the "
+                          "COMPLETE corrected deck_spec (keep what already passed):\n" + fb)
                 spec = ag.call_claude(ag.SYSTEM_GENERATE, repair)
                 result = _render(spec)
                 attempts += 1
-            return {"spec": spec, **result, "attempts": attempts}
+            return {"spec": spec, **result, "attempts": attempts,
+                    "empty_slides": _empty_slides(result["pptx_base64"])}
 
         if req.mode == "generate_slide":
             user = f"Request: {req.prompt}\n"
@@ -257,8 +300,10 @@ def agent(req: AgentRequest):
                 user += f"language: {req.language}\n"
             if req.audience:
                 user += f"audience: {req.audience}\n"
-            slide = ag.call_claude(ag.SYSTEM_GENERATE_SLIDE, user)
-            return {"spec": slide, **_render_single(slide, req.language, req.audience)}
+            slide, result = _one_slide(ag, ag.SYSTEM_GENERATE_SLIDE, user,
+                                       req.language, req.audience)
+            return {"spec": slide, **result,
+                    "empty_slides": _empty_slides(result["pptx_base64"])}
 
         if req.mode == "edit_slide":
             if not req.slide_spec or not req.command:
@@ -270,8 +315,10 @@ def agent(req: AgentRequest):
                 user += f"language: {req.language}\n"
             if req.audience:
                 user += f"audience: {req.audience}\n"
-            slide = ag.call_claude(ag.SYSTEM_EDIT_SLIDE, user)
-            return {"spec": slide, **_render_single(slide, req.language, req.audience)}
+            slide, result = _one_slide(ag, ag.SYSTEM_EDIT_SLIDE, user,
+                                       req.language, req.audience)
+            return {"spec": slide, **result,
+                    "empty_slides": _empty_slides(result["pptx_base64"])}
 
         return JSONResponse(status_code=400, content={"error": f"unknown mode: {req.mode}"})
     except Exception as exc:                                  # noqa: BLE001

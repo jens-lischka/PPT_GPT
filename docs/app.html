@@ -204,6 +204,7 @@
     $("btnInsertDeck").disabled = !ok;
     log(`built ${d.slide_count} slides` + (d.attempts > 1 ? ` (after ${d.attempts} attempts)` : "") +
         ` · ${ok ? "ready to insert" : "gate FAILED — see reasons above; click Build deck to retry"}`);
+    if (d.empty_slides?.length) log(`⚠ slide(s) ${d.empty_slides.join(", ")} rendered blank — rebuild (click Build deck again) before relying on them.`);
   });
 
   $("btnInsertDeck").onclick = guarded(async () => {
@@ -240,6 +241,7 @@
       deck_id: rec.deck_id, slide_uuid: target.uuid });
     const ok = showGate($("editGate"), d.gate_result);
     if (!ok) return log("gate FAILED — slide not replaced.");
+    if (d.empty_slides?.length) return log("the edited slide rendered blank — slide NOT replaced. Rephrase the command and try again.");
     // regenerate-and-replace: insert after old, tag with same uuid, delete old
     const created = await insertReturningIds(d.pptx_base64, target.id);
     if (!created.length) return log("insert produced no new slide — old slide kept, nothing changed.");
@@ -257,6 +259,7 @@
     const d = await callEdge({ mode: "generate_slide", prompt });
     const ok = showGate($("createGate"), d.gate_result);
     if (!ok) return log("gate FAILED — slide not inserted.");
+    if (d.empty_slides?.length) return log("the new slide rendered blank — not inserted. Rephrase and try again.");
     const created = await insertReturningIds(d.pptx_base64, after);
     if (!created.length) return log("insert produced no new slide.");
     const uuid = crypto.randomUUID();
