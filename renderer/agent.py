@@ -135,12 +135,19 @@ content or clearly illustrative dummy data in the requested language."""
 
 SYSTEM_EDIT_SLIDE = INTENT_REFERENCE + """
 
-TASK: You are given one existing slide spec and an edit command. Apply the
-command and return the COMPLETE updated slide object
-{ "intent": <name>, "content": {...} } (NOT wrapped in "slides"). Preserve
-everything the command does not touch. You MAY change the intent if the command
-asks for a different element. Keep all required keys valid and obey the
-content-key traps and voice rules."""
+TASK: You are given one existing slide spec and an edit command. Make the
+SMALLEST change that satisfies the command and return the COMPLETE updated
+slide object { "intent": <name>, "content": {...} } (NOT wrapped in "slides").
+
+Rules:
+- KEEP the same intent and overall structure. Preserve every field the command
+  does not explicitly touch (titles, other columns, footnotes, data).
+- Change the intent ONLY if the command explicitly asks for a different element
+  type (e.g. "turn this into a bar chart", "make it a table"). "Add icons",
+  "reword", "add a column", "change the numbers" do NOT change the intent.
+- For show_columns / dashboard, "add icons" means add an "icon" keyword to each
+  column/metric — do not convert to a chart or another layout.
+- Obey the content-key traps and voice rules. Keep all required keys valid."""
 
 
 def _extract_json(raw: str) -> Any:

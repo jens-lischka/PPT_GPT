@@ -76,7 +76,14 @@
   // ---------- state ----------
   const $ = (id) => document.getElementById(id);
   const log = (m) => { const el = $("log"); el.textContent += "\n" + m; el.scrollTop = el.scrollHeight; };
-  const cfg = {}; let storyline = null, deckSpec = null, deckPptx = null;
+  const cfg = {}; let storyline = null, deckSpec = null, deckPptx = null; let busy = false;
+  // Serialize actions: Office edits (insert/tag/delete) must not overlap, or a
+  // second click hits a slide the first already moved/deleted (InvalidArgument).
+  const guarded = (fn) => async () => {
+    if (busy) return log("⏳ busy — wait for the current action to finish.");
+    busy = true;
+    try { await fn(); } catch (e) { log("ERROR " + e); } finally { busy = false; }
+  };
   const SPEC_KEY = "ow_specs";                     // slide_uuid -> {spec, deck_id}
   const specStore = JSON.parse(localStorage.getItem(SPEC_KEY) || "{}");
   const saveSpecs = () => localStorage.setItem(SPEC_KEY, JSON.stringify(specStore));
@@ -175,103 +182,88 @@
   }
 
   // ---------- PHASE 1 ----------
-  $("btnStoryline").onclick = async () => {
-    try {
-      const prompt = $("prompt").value.trim();
-      if (!prompt) return log("enter a brief first.");
-      log("drafting storyline…");
-      const d = await callEdge({ mode: "storyline", prompt });
-      storyline = d.storyline?.storyline || d.storyline;   // {title,language,audience,storyline:[...]}
-      const items = storyline.storyline || storyline;
-      $("storylineBox").innerHTML = `<p class="muted">${storyline.title || ""} · ${items.length} slides</p>` +
-        "<ol class='storyline'>" + items.map((s) =>
-          `<li><b>${s.intent}</b> — ${s.title}<br><span class="muted">${s.note || ""}</span></li>`).join("") + "</ol>";
-      $("btnGenerate").disabled = false;
-      log("storyline ready — review, then Build deck.");
-    } catch (e) { log("ERROR " + e); }
-  };
+  $("btnStoryline").onclick = guarded(async () => {
+    const prompt = $("prompt").value.trim();
+    if (!prompt) return log("enter a brief first.");
+    log("drafting storyline…");
+    const d = await callEdge({ mode: "storyline", prompt });
+    storyline = d.storyline?.storyline || d.storyline;   // {title,language,audience,storyline:[...]}
+    const items = storyline.storyline || storyline;
+    $("storylineBox").innerHTML = `<p class="muted">${storyline.title || ""} · ${items.length} slides</p>` +
+      "<ol class='storyline'>" + items.map((s) =>
+        `<li><b>${s.intent}</b> — ${s.title}<br><span class="muted">${s.note || ""}</span></li>`).join("") + "</ol>";
+    $("btnGenerate").disabled = false;
+    log("storyline ready — review, then Build deck.");
+  });
 
-  $("btnGenerate").onclick = async () => {
-    try {
-      log("building deck (render + gate)…");
-      const d = await callEdge({ mode: "generate", storyline: storyline, prompt: $("prompt").value.trim() });
-      deckSpec = d.spec; deckPptx = d.pptx_base64; deckSpec._persisted = d.persisted || null;
-      const ok = showGate($("genGate"), d.gate_result);
-      $("btnInsertDeck").disabled = !ok;
-      log(`built ${d.slide_count} slides` + (d.attempts > 1 ? ` (after ${d.attempts} attempts)` : "") +
-          ` · ${ok ? "ready to insert" : "gate FAILED — see reasons above; click Build deck to retry"}`);
-      if (d.persisted) log("persisted deck " + d.persisted.deck_id);
-    } catch (e) { log("ERROR " + e); }
-  };
+  $("btnGenerate").onclick = guarded(async () => {
+    log("building deck (render + gate)… this can take 1–3 min.");
+    const d = await callEdge({ mode: "generate", storyline: storyline, prompt: $("prompt").value.trim() });
+    deckSpec = d.spec; deckPptx = d.pptx_base64; deckSpec._persisted = d.persisted || null;
+    const ok = showGate($("genGate"), d.gate_result);
+    $("btnInsertDeck").disabled = !ok;
+    log(`built ${d.slide_count} slides` + (d.attempts > 1 ? ` (after ${d.attempts} attempts)` : "") +
+        ` · ${ok ? "ready to insert" : "gate FAILED — see reasons above; click Build deck to retry"}`);
+  });
 
-  $("btnInsertDeck").onclick = async () => {
-    try {
-      const created = await insertReturningIds(deckPptx, null);
-      const persisted = deckSpec._persisted;
-      for (let i = 0; i < created.length; i++) {
-        const uuid = persisted?.slides?.[i]?.slide_uuid || crypto.randomUUID();
-        await tagSlide(created[i], uuid);
-        specStore[uuid] = { spec: deckSpec.slides[i], deck_id: persisted?.deck_id || null };
-      }
-      saveSpecs();
-      log(`inserted & tagged ${created.length} slides.`);
-      $("btnInsertDeck").disabled = true;
-    } catch (e) { log("ERROR " + e); }
-  };
+  $("btnInsertDeck").onclick = guarded(async () => {
+    const created = await insertReturningIds(deckPptx, null);
+    const persisted = deckSpec._persisted;
+    for (let i = 0; i < created.length; i++) {
+      const uuid = persisted?.slides?.[i]?.slide_uuid || crypto.randomUUID();
+      await tagSlide(created[i], uuid);
+      specStore[uuid] = { spec: deckSpec.slides[i], deck_id: persisted?.deck_id || null };
+    }
+    saveSpecs();
+    log(`inserted & tagged ${created.length} slides.`);
+    $("btnInsertDeck").disabled = true;
+  });
 
   // ---------- PHASE 2 ----------
-  $("btnWhich").onclick = async () => {
-    try {
-      const sel = await getSelected();
-      if (!sel.length) return log("(nothing selected)");
-      sel.forEach((s) => log(`slide index=${s.index} uuid=${s.uuid || "(untracked)"}` +
-        (s.uuid && specStore[s.uuid] ? ` intent=${specStore[s.uuid].spec.intent}` : "")));
-    } catch (e) { log("ERROR " + e); }
-  };
+  $("btnWhich").onclick = guarded(async () => {
+    const sel = await getSelected();
+    if (!sel.length) return log("(nothing selected)");
+    sel.forEach((s) => log(`slide index=${s.index} uuid=${s.uuid || "(untracked)"}` +
+      (s.uuid && specStore[s.uuid] ? ` intent=${specStore[s.uuid].spec.intent}` : "")));
+  });
 
-  $("btnEdit").onclick = async () => {
-    try {
-      const cmd = $("cmd").value.trim(); if (!cmd) return log("enter an edit command.");
-      const sel = await getSelected();
-      if (!sel.length) return log("select a slide first.");
-      const target = sel[0];
-      if (!target.uuid || !specStore[target.uuid])
-        return log("this slide isn't tracked (created outside the pane). Adopting foreign slides is Phase 3.");
-      const rec = specStore[target.uuid];
-      log("editing slide…");
-      const d = await callEdge({ mode: "edit_slide", slide_spec: rec.spec, command: cmd,
-        deck_id: rec.deck_id, slide_uuid: target.uuid });
-      const ok = showGate($("editGate"), d.gate_result);
-      if (!ok) return log("gate FAILED — slide not replaced.");
-      // regenerate-and-replace: insert after old, tag with same uuid, delete old
-      const created = await insertReturningIds(d.pptx_base64, target.id);
-      if (created.length) {
-        await tagSlide(created[0], target.uuid);
-        specStore[target.uuid] = { spec: d.spec, deck_id: rec.deck_id }; saveSpecs();
-        await deleteSlide(target.id);
-        log("slide replaced ✓");
-      }
-    } catch (e) { log("ERROR " + e); }
-  };
+  $("btnEdit").onclick = guarded(async () => {
+    const cmd = $("cmd").value.trim(); if (!cmd) return log("enter an edit command.");
+    const sel = await getSelected();
+    if (!sel.length) return log("select a slide first.");
+    const target = sel[0];
+    if (!target.uuid || !specStore[target.uuid])
+      return log("this slide isn't tracked (created outside the pane). Adopting foreign slides is Phase 3.");
+    const rec = specStore[target.uuid];
+    log("editing slide…");
+    const d = await callEdge({ mode: "edit_slide", slide_spec: rec.spec, command: cmd,
+      deck_id: rec.deck_id, slide_uuid: target.uuid });
+    const ok = showGate($("editGate"), d.gate_result);
+    if (!ok) return log("gate FAILED — slide not replaced.");
+    // regenerate-and-replace: insert after old, tag with same uuid, delete old
+    const created = await insertReturningIds(d.pptx_base64, target.id);
+    if (!created.length) return log("insert produced no new slide — old slide kept, nothing changed.");
+    await tagSlide(created[0], target.uuid);
+    specStore[target.uuid] = { spec: d.spec, deck_id: rec.deck_id }; saveSpecs();
+    await deleteSlide(target.id);
+    log("slide replaced ✓");
+  });
 
-  $("btnCreate").onclick = async () => {
-    try {
-      const prompt = $("newSlide").value.trim(); if (!prompt) return log("describe the new slide.");
-      const sel = await getSelected();
-      const after = sel[0]?.id || null;
-      log("creating slide…");
-      const d = await callEdge({ mode: "generate_slide", prompt });
-      const ok = showGate($("createGate"), d.gate_result);
-      if (!ok) return log("gate FAILED — slide not inserted.");
-      const created = await insertReturningIds(d.pptx_base64, after);
-      if (created.length) {
-        const uuid = crypto.randomUUID();
-        await tagSlide(created[0], uuid);
-        specStore[uuid] = { spec: d.spec, deck_id: null }; saveSpecs();
-        log("slide created ✓");
-      }
-    } catch (e) { log("ERROR " + e); }
-  };
+  $("btnCreate").onclick = guarded(async () => {
+    const prompt = $("newSlide").value.trim(); if (!prompt) return log("describe the new slide.");
+    const sel = await getSelected();
+    const after = sel[0]?.id || null;
+    log("creating slide…");
+    const d = await callEdge({ mode: "generate_slide", prompt });
+    const ok = showGate($("createGate"), d.gate_result);
+    if (!ok) return log("gate FAILED — slide not inserted.");
+    const created = await insertReturningIds(d.pptx_base64, after);
+    if (!created.length) return log("insert produced no new slide.");
+    const uuid = crypto.randomUUID();
+    await tagSlide(created[0], uuid);
+    specStore[uuid] = { spec: d.spec, deck_id: null }; saveSpecs();
+    log("slide created ✓");
+  });
   </script>
 </body>
 </html>
