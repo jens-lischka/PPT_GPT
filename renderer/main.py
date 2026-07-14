@@ -95,7 +95,7 @@ class AgentRequest(BaseModel):
     either backend unchanged."""
     mode: str                           # storyline|generate|generate_slide|edit_slide
     prompt: str | None = None
-    storyline: dict[str, Any] | None = None
+    storyline: Any = None               # object or list of slide outlines
     slide_spec: dict[str, Any] | None = None
     command: str | None = None
     language: str | None = None
