@@ -118,9 +118,16 @@
   }
   function showGate(el, g) {
     if (!g) { el.innerHTML = ""; return null; }
-    el.innerHTML = `<p class="${g.passed ? "gate-pass" : "gate-fail"}">gate ${g.passed ? "PASS" : "FAIL"}` +
-      ` · score ${g.overall_score ?? "?"}</p>` +
-      (g.warn_items?.length ? `<p class="muted">warnings: ${g.warn_items.length}</p>` : "");
+    let html = `<p class="${g.passed ? "gate-pass" : "gate-fail"}">gate ${g.passed ? "PASS" : "FAIL"}` +
+      ` · score ${g.overall_score ?? "?"}</p>`;
+    if (!g.passed) {
+      const fails = [];
+      for (const [name, chk] of Object.entries(g.checks || {}))
+        if (chk.severity === "hard" && !chk.passed)
+          (chk.fail_items || []).forEach((i) => fails.push(`${name}: ${i}`));
+      if (fails.length) html += "<ul class='muted'>" + fails.map((f) => `<li>${f}</li>`).join("") + "</ul>";
+    }
+    el.innerHTML = html;
     return g.passed;
   }
 
@@ -188,7 +195,8 @@
       deckSpec = d.spec; deckPptx = d.pptx_base64; deckSpec._persisted = d.persisted || null;
       const ok = showGate($("genGate"), d.gate_result);
       $("btnInsertDeck").disabled = !ok;
-      log(`built ${d.slide_count} slides · ${ok ? "ready to insert" : "gate FAILED — insertion blocked"}`);
+      log(`built ${d.slide_count} slides` + (d.attempts > 1 ? ` (after ${d.attempts} attempts)` : "") +
+          ` · ${ok ? "ready to insert" : "gate FAILED — see reasons above; click Build deck to retry"}`);
       if (d.persisted) log("persisted deck " + d.persisted.deck_id);
     } catch (e) { log("ERROR " + e); }
   };

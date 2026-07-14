@@ -110,8 +110,21 @@ TASK: Produce a COMPLETE deck_spec (the full JSON object with "slides") from
 the user's brief and/or a confirmed storyline. Fill every required content key
 with real, specific, on-brief content in the deck's language. Where the user
 gave no data, invent plausible, clearly illustrative dummy values (round
-numbers, obvious placeholders) — never leave a slot empty. Obey every
-content-key trap and voice rule above."""
+numbers, obvious placeholders) — never leave a slot empty.
+
+A deterministic gate will BLOCK the deck unless ALL of these hold — comply the
+first time:
+- Every content-slide title is a FULL SENTENCE with a subject and a verb that
+  states the finding (the "so what"), 4-15 words. Never a topic label. Bad:
+  "Overview", "Numbers", "Our market". Good: "Two suppliers cover 80% of
+  volume at lower cost."
+- No banned terms anywhere (transformation, optimise, leverage, enable,
+  enhance, empower, facilitate, utilise, synergy, seamless, "drive value",
+  "best-in-class", etc.).
+- Every data/table/chart slide carries a "footnote" starting "Source: "
+  (English) or "Quelle: " (German).
+- Each slide is substantive: an explain/summary body has 2-4 parallel bullets,
+  not one thin line. Prefer numbers and specifics."""
 
 SYSTEM_GENERATE_SLIDE = INTENT_REFERENCE + """
 

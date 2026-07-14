@@ -124,6 +124,24 @@ def _slide_count(pptx_path: Path) -> int:
     return len(Presentation(str(pptx_path)).slides)
 
 
+def _gate_feedback(gate: dict) -> str:
+    """Render the gate's failing items as a fix list for the repair prompt.
+    Hard fails block; warns only lower the score — list hard first, clearly."""
+    hard, warn = [], []
+    for name, chk in (gate.get("checks") or {}).items():
+        for item in chk.get("fail_items", []):
+            (hard if chk.get("severity") == "hard" and not chk.get("passed")
+             else warn).append(f"[{name}] {item}")
+    lines = []
+    if hard:
+        lines.append("MUST-FIX (these block the deck):")
+        lines += [f"  - {x}" for x in hard]
+    if warn:
+        lines.append("SHOULD-FIX (raise quality):")
+        lines += [f"  - {x}" for x in warn]
+    return "\n".join(lines) or "(no specific items reported)"
+
+
 @app.get("/healthz")
 def healthz():
     return {"ok": True, "runtime_version": RUNTIME_VERSION}
@@ -213,7 +231,21 @@ def agent(req: AgentRequest):
             if req.audience:
                 user += f"audience: {req.audience}\n"
             spec = ag.call_claude(ag.SYSTEM_GENERATE, user)
-            return {"spec": spec, **_render(spec)}
+            result = _render(spec)
+            # Self-repair: the gate is non-overridable, so on a fail we feed the
+            # exact failing items back to the model and rebuild, up to 2 retries.
+            attempts = 1
+            while not result["gate_result"]["passed"] and attempts < 2:
+                fb = _gate_feedback(result["gate_result"])
+                repair = (user + "\n\nYou previously produced this deck:\n"
+                          + json.dumps(spec, ensure_ascii=False)
+                          + "\n\nA deterministic quality gate BLOCKED it. Fix EVERY "
+                          "item below and return the COMPLETE corrected deck_spec "
+                          "(keep what already passed):\n" + fb)
+                spec = ag.call_claude(ag.SYSTEM_GENERATE, repair)
+                result = _render(spec)
+                attempts += 1
+            return {"spec": spec, **result, "attempts": attempts}
 
         if req.mode == "generate_slide":
             user = f"Request: {req.prompt}\n"
