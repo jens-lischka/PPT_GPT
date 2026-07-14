@@ -129,6 +129,31 @@ def healthz():
     return {"ok": True, "runtime_version": RUNTIME_VERSION}
 
 
+@app.get("/selftest")
+def selftest():
+    """Browser-openable diagnostic (a GET, so it bypasses the pane, CORS
+    preflight, and any POST filtering). Reports whether the API key is present
+    and whether a minimal Claude call succeeds — returns the real error text."""
+    key = os.environ.get("ANTHROPIC_API_KEY")
+    info: dict[str, Any] = {
+        "runtime_version": RUNTIME_VERSION,
+        "key_present": bool(key),
+        "key_prefix": (key[:8] + "…") if key else None,
+        "model": os.environ.get("ANTHROPIC_MODEL", "claude-opus-4-8"),
+        "allowed_origins": os.environ.get("ALLOWED_ORIGINS", "*"),
+    }
+    try:
+        import agent as ag
+        out = ag.call_claude('Reply with exactly {"pong": true} as JSON.',
+                             "ping", max_tokens=64, thinking=False)
+        info["claude"] = {"ok": True, "sample": out}
+    except Exception as exc:                                  # noqa: BLE001
+        import traceback
+        traceback.print_exc()
+        info["claude"] = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+    return info
+
+
 @app.post("/render")
 def render(req: RenderRequest):
     try:

@@ -168,11 +168,22 @@ def _extract_json(raw: str) -> Any:
     raise ValueError(f"unbalanced JSON in model output: {t[:200]}")
 
 
-def call_claude(system: str, user_text: str) -> Any:
+def call_claude(system: str, user_text: str, *, max_tokens: int = 16000,
+                thinking: bool = True) -> Any:
     """Call Anthropic Messages API and return the parsed JSON payload."""
     api_key = os.environ.get("ANTHROPIC_API_KEY")
     if not api_key:
         raise RuntimeError("ANTHROPIC_API_KEY is not set")
+    payload: dict[str, Any] = {
+        "model": MODEL,
+        "max_tokens": max_tokens,
+        "system": [{"type": "text", "text": system,
+                    "cache_control": {"type": "ephemeral"}}],
+        "messages": [{"role": "user", "content": user_text}],
+    }
+    if thinking:
+        payload["thinking"] = {"type": "adaptive"}
+        payload["output_config"] = {"effort": "medium"}
     resp = httpx.post(
         "https://api.anthropic.com/v1/messages",
         headers={
@@ -180,15 +191,7 @@ def call_claude(system: str, user_text: str) -> Any:
             "x-api-key": api_key,
             "anthropic-version": "2023-06-01",
         },
-        json={
-            "model": MODEL,
-            "max_tokens": 16000,
-            "thinking": {"type": "adaptive"},
-            "output_config": {"effort": "medium"},
-            "system": [{"type": "text", "text": system,
-                        "cache_control": {"type": "ephemeral"}}],
-            "messages": [{"role": "user", "content": user_text}],
-        },
+        json=payload,
         timeout=120.0,
     )
     if resp.status_code != 200:
