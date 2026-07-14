@@ -201,8 +201,8 @@ def agent(req: AgentRequest):
 
         if req.mode == "edit_slide":
             if not req.slide_spec or not req.command:
-                raise HTTPException(status_code=400,
-                                    detail="edit_slide requires slide_spec and command")
+                return JSONResponse(status_code=400,
+                    content={"error": "edit_slide requires slide_spec and command"})
             user = (f"Existing slide spec:\n{req.slide_spec}\n\n"
                     f"Edit command: {req.command}\n")
             if req.language:
@@ -212,8 +212,10 @@ def agent(req: AgentRequest):
             slide = ag.call_claude(ag.SYSTEM_EDIT_SLIDE, user)
             return {"spec": slide, **_render_single(slide, req.language, req.audience)}
 
-        raise HTTPException(status_code=400, detail=f"unknown mode: {req.mode}")
-    except HTTPException:
-        raise
+        return JSONResponse(status_code=400, content={"error": f"unknown mode: {req.mode}"})
     except Exception as exc:                                  # noqa: BLE001
-        raise HTTPException(status_code=502, detail=f"{type(exc).__name__}: {exc}")
+        import traceback
+        traceback.print_exc()                                # surfaces in Render logs
+        print(f"[/agent] {type(exc).__name__}: {exc}", flush=True)
+        return JSONResponse(status_code=502,
+                            content={"error": f"{type(exc).__name__}: {exc}"})

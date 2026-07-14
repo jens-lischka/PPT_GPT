@@ -110,8 +110,10 @@
         ...(cfg.anonKey ? { "authorization": "Bearer " + cfg.anonKey } : {}) },
       body: JSON.stringify(body),
     });
-    const data = await res.json();
-    if (!res.ok || data.error) throw new Error(data.error || ("edge " + res.status));
+    let data;
+    try { data = await res.json(); }
+    catch { throw new Error(`backend ${res.status} (non-JSON response — likely cold start; retry)`); }
+    if (!res.ok || data.error) throw new Error(data.error || data.detail || ("backend " + res.status));
     return data;
   }
   function showGate(el, g) {
