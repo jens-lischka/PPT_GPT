@@ -5,7 +5,7 @@ WORKDIR /app
 COPY requirements.txt runtime_requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt -r runtime_requirements.txt
 
-COPY main.py ow_default.pptx ./
+COPY main.py agent.py ow_default.pptx ./
 COPY src ./src
 
 # Cloud Run injects $PORT; default 8080 for local docker run.
