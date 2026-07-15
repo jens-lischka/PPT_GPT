@@ -15,7 +15,9 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 import os
+import re
 import sys
 import tempfile
 from pathlib import Path
@@ -31,8 +33,10 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE / "src"))
 
 from runtime import TemplateRuntime, __version__ as RUNTIME_VERSION  # noqa: E402
-from compiler import SemanticCompiler                               # noqa: E402
+from compiler import SemanticCompiler, INTENTS as _INTENTS           # noqa: E402
 from gate import run_gate                                           # noqa: E402
+
+import jobs                                                         # noqa: E402
 
 TEMPLATE = str(HERE / "ow_default.pptx")
 
@@ -105,6 +109,8 @@ class AgentRequest(BaseModel):
     command: str | None = None
     language: str | None = None
     audience: str | None = None
+    background: bool = False            # True → return {job_id}; poll /agent/jobs/{id}
+    slide_pptx_base64: str | None = None  # edit_slide: export of the LIVE slide
 
 
 # ---------------------------------------------------------------------------
@@ -173,13 +179,142 @@ def _macro_columns_layout(content: dict) -> dict:
 _MACROS = {"columns_layout": _macro_columns_layout}
 
 
+# ---------------------------------------------------------------------------
+# Intent normalization + compile-error capture.
+#
+# The runtime compiler SKIPS a slide whose intent is unknown or whose content
+# blows up (logger.error + continue) — the deck renders with fewer slides, the
+# gate can still pass, and the pane's uuid↔spec index mapping silently
+# misaligns (later edits then hit the wrong spec). Two defenses, both outside
+# the untouched runtime:
+#   1. _normalize_intents: map the model's usual near-misses (e.g. "quote",
+#      "show_trend", "timeline") onto real registry names before compiling.
+#   2. a logging handler on the "compiler" logger records every
+#      "Slide N failed to compile" during build, so dropped slides become
+#      actionable feedback (repair / block) instead of a vanished slide.
+# ---------------------------------------------------------------------------
+_INTENT_ALIASES = {
+    "quote": "show_quote",
+    "trend": "show_trend_with_key_message",
+    "show_trend": "show_trend_with_key_message",
+    "show_chart": "show_trend_with_key_message",
+    "chart": "show_trend_with_key_message",
+    "timeline": "show_timeline",
+    "process": "show_process",
+    "table": "show_data",
+    "data": "show_data",
+    "columns": "show_columns",
+    "matrix": "show_matrix",
+    "org_chart": "show_org_chart",
+    "waterfall": "show_waterfall",
+    "treemap": "show_treemap",
+    "pyramid": "show_pyramid",
+    "cycle": "show_cycle",
+    "contents": "show_contents",
+    "toc": "show_contents",
+    "agenda": "show_contents",
+    "kpi": "dashboard",
+    "kpis": "dashboard",
+    "metrics": "dashboard",
+    "stats": "stat_callout",
+    "stat": "stat_callout",
+    "person": "introduce_person",
+    "cover": "introduce_topic",
+    "title_slide": "introduce_topic",
+    "divider": "section_divider",
+    "section": "section_divider",
+    "pros_cons": "compare",
+    "comparison": "compare_two_options",
+    "column_layout": "columns_layout",
+    "multi_column": "columns_layout",
+}
+
+
+def _canon_intent(name: Any) -> str | None:
+    """Best-effort map of a model-emitted intent onto the registry (or macro)
+    name. Returns None when there is no defensible match."""
+    if isinstance(name, str) and (name in _INTENTS or name in _MACROS):
+        return name
+    n = str(name or "").strip().lower().replace("-", "_").replace(" ", "_")
+    if n in _INTENTS or n in _MACROS:
+        return n
+    if n in _INTENT_ALIASES:
+        return _INTENT_ALIASES[n]
+    if "show_" + n in _INTENTS:
+        return "show_" + n
+    if n.startswith("show_") and n[5:] in _INTENTS:
+        return n[5:]
+    return None
+
+
+def _normalize_intents(deck_spec: dict) -> tuple[dict, list[tuple[int, str]]]:
+    """Canonicalize slide intents in a copy of deck_spec. Returns the new spec
+    and the 1-based (index, bad_name) list of slides that stay unknown."""
+    slides = deck_spec.get("slides")
+    if not isinstance(slides, list):
+        return deck_spec, []
+    unknown: list[tuple[int, str]] = []
+    new_slides = []
+    for i, s in enumerate(slides, 1):
+        if isinstance(s, dict):
+            canon = _canon_intent(s.get("intent"))
+            if canon is None:
+                unknown.append((i, str(s.get("intent"))))
+            elif canon != s.get("intent"):
+                s = {**s, "intent": canon}
+            s = _fix_content_shapes(s)
+        new_slides.append(s)
+    if not unknown and all(a is b for a, b in zip(new_slides, slides)):
+        return deck_spec, []
+    return {**deck_spec, "slides": new_slides}, unknown
+
+
+def _fix_content_shapes(slide: dict) -> dict:
+    """Forgiving-layer fixups for shapes the model plausibly gets wrong and the
+    runtime then silently degrades on. Currently: a plain-string 'insight' on
+    show_trend_with_key_message breaks the insight-card strategy (needs
+    {title?, text}) — the slide would render WITHOUT its colored callout."""
+    if not isinstance(slide, dict):
+        return slide
+    c = slide.get("content")
+    if (slide.get("intent") == "show_trend_with_key_message"
+            and isinstance(c, dict) and isinstance(c.get("insight"), str)):
+        return {**slide, "content": {**c, "insight": {"text": c["insight"]}}}
+    return slide
+
+
+class _CompileErrorCapture(logging.Handler):
+    """Collects the compiler's 'Slide N failed to compile: …' errors so the
+    caller learns WHICH slides were silently dropped."""
+    def __init__(self) -> None:
+        super().__init__(level=logging.ERROR)
+        self.items: list[tuple[int, str]] = []
+
+    def emit(self, record: logging.LogRecord) -> None:
+        m = re.match(r"Slide (\d+) failed to compile: (.*)", record.getMessage())
+        if m:
+            self.items.append((int(m.group(1)), m.group(2)))
+
+
 def _render(deck_spec: dict) -> dict:
+    deck_spec, unknown = _normalize_intents(deck_spec)
+    if unknown:
+        names = ", ".join(f"slide {i}: {n!r}" for i, n in unknown)
+        raise ValueError(
+            f"unknown intent(s) — {names}. Valid intents: "
+            + ", ".join(sorted(set(_INTENTS) | set(_MACROS))))
     deck_spec = _expand_macros(deck_spec)          # convenience macros → real intents
+    capture = _CompileErrorCapture()
+    compiler_logger = logging.getLogger("compiler")
     with tempfile.TemporaryDirectory() as td:
         out = Path(td) / "deck.pptx"
         gate_path = Path(td) / "gate_result.json"
         rt = TemplateRuntime(TEMPLATE)
-        SemanticCompiler(rt).build(deck_spec)
+        compiler_logger.addHandler(capture)
+        try:
+            SemanticCompiler(rt).build(deck_spec)
+        finally:
+            compiler_logger.removeHandler(capture)
         rt.save(str(out))
         gate = run_gate(deck_spec, str(out), TEMPLATE, str(gate_path))
         gate.pop("_path", None)
@@ -191,6 +326,9 @@ def _render(deck_spec: dict) -> dict:
             "slide_count": len(analysis),
             "runtime_version": RUNTIME_VERSION,
             "_analysis": analysis,
+            # 1-based SPEC indices of slides the compiler dropped (+ why) —
+            # valid even when rendered count no longer matches the spec.
+            "_compile_errors": capture.items,
         }
 
 
@@ -225,6 +363,60 @@ def _empty_slides(analysis) -> list[int]:
     return [i for i, a in enumerate(_as_analysis(analysis), 1) if a["body"] == 0]
 
 
+def _inspect_slide(pptx_b64: str) -> dict | None:
+    """Parse ONE exported slide (pptx base64 from Office.js exportAsBase64)
+    into a compact inventory of what is ACTUALLY on it — the ground truth for
+    edits, including any manual changes made after generation."""
+    import io
+    from pptx import Presentation
+    try:
+        prs = Presentation(io.BytesIO(base64.b64decode(pptx_b64)))
+        slides = list(prs.slides)
+    except Exception as exc:                                  # noqa: BLE001
+        print(f"[inspect] unparseable slide export: {exc}", flush=True)
+        return None
+    if not slides:
+        return None
+    s = slides[0]
+    inv: dict[str, Any] = {"texts": [], "tables": [], "charts": [],
+                           "pictures": 0, "other_graphics": 0}
+    for sh in s.shapes:
+        try:
+            if sh.has_text_frame:
+                t = sh.text_frame.text.strip()
+                if t:
+                    inv["texts"].append(t[:400])
+            if sh.has_table:
+                rows = [[c.text.strip() for c in r.cells] for r in sh.table.rows]
+                inv["tables"].append(rows[:20])
+            elif sh.has_chart:
+                ch = sh.chart
+                try:
+                    ctype = str(ch.chart_type).split(" ")[0]
+                except Exception:                             # noqa: BLE001
+                    ctype = "unknown"
+                cats: list = []
+                series: list = []
+                try:
+                    plot = ch.plots[0]
+                    cats = [str(c) for c in plot.categories]
+                    series = [{"name": sr.name,
+                               "values": [None if v is None else round(v, 4)
+                                          for v in sr.values]}
+                              for sr in plot.series]
+                except Exception:                             # noqa: BLE001
+                    pass
+                inv["charts"].append({"type": ctype, "categories": cats,
+                                      "series": series})
+            elif sh.shape_type == 6 or str(sh.shape_type).startswith("GRAPHIC"):
+                inv["other_graphics"] += 1                    # chartEx/diagrams
+            if sh.shape_type == 13:
+                inv["pictures"] += 1
+        except Exception:                                     # noqa: BLE001
+            continue          # a single exotic shape must not kill the edit
+    return inv
+
+
 def _slide_requests(slide: dict, kind: str) -> bool:
     """Does this slide spec ask for a chart / table? (scan the JSON + intent)."""
     try:
@@ -254,10 +446,12 @@ def _shortfall_slides(deck_spec: dict, analysis) -> list[int]:
     return out
 
 
-def _bad_slides(deck_spec: dict, analysis) -> list[int]:
-    """Slides that are blank OR missing a requested visual — must not ship."""
+def _bad_slides(deck_spec: dict, analysis, compile_errors=None) -> list[int]:
+    """Slides that are blank, missing a requested visual, OR silently dropped
+    by the compiler — none of these may ship."""
     a = _as_analysis(analysis)
-    return sorted(set(_empty_slides(a)) | set(_shortfall_slides(deck_spec, a)))
+    dropped = {i for i, _ in (compile_errors or [])}
+    return sorted(set(_empty_slides(a)) | set(_shortfall_slides(deck_spec, a)) | dropped)
 
 
 def _gate_feedback(gate: dict) -> str:
@@ -351,7 +545,7 @@ def _one_slide(ag, system: str, user: str, language, audience):
         even when the model quietly produced a text-only slide. Reuses the single
         parse in result['_analysis'] — no re-open of the pptx."""
         a = result["_analysis"]
-        bad = set(_bad_slides({"slides": [slide]}, a))
+        bad = set(_bad_slides({"slides": [slide]}, a, result.get("_compile_errors")))
         inv = a[0] if a else {"charts": 0, "tables": 0}
         low = user.lower()
         if any(w in low for w in ("chart", "graph", "plot")) and inv["charts"] == 0:
@@ -360,20 +554,30 @@ def _one_slide(ag, system: str, user: str, language, audience):
             bad.add(1)
         return sorted(bad)
 
+    jobs.progress("drafting the slide (fast model)")
     slide = ag.call_claude(system, user, fast=True)     # fast happy path
-    result = _render_single(slide, language, audience)
-    bad = _bad(slide, result)
+    jobs.progress("rendering")
+    render_error = None
+    try:
+        result = _render_single(slide, language, audience)
+        bad = _bad(slide, result)
+    except ValueError as exc:           # unknown intent / compile-level reject
+        render_error, result, bad = str(exc), None, [1]
     if bad:
+        jobs.progress("first draft rejected — retrying with the strong model")
         print("[/agent] one-slide blank/missing-visual — retrying (strong model)", flush=True)
-        retry = (user + "\n\nYour previous slide was REJECTED: it rendered with "
-                 "MISSING content — either an empty canvas, or a chart/table the "
-                 "request asked for did not appear (you omitted it or its data shape "
-                 "was wrong). Include EVERY element the request asks for. For multi-"
+        reason = (f"it used an invalid intent ({render_error})" if render_error else
+                  "it rendered with MISSING content — either an empty canvas, or a "
+                  "chart/table the request asked for did not appear (you omitted it "
+                  "or its data shape was wrong)")
+        retry = (user + f"\n\nYour previous slide was REJECTED: {reason}. "
+                 "Include EVERY element the request asks for. For multi-"
                  "column-with-visuals use the columns_layout intent; for a chart use "
                  '{"chart":{"type":"column|bar|line|pie|area","categories":[…],'
                  '"series":[{"name":"…","values":[…]}]}}. Return the corrected slide.')
         slide = ag.call_claude(system, retry, fast=False)   # escalate to strong
-        result = _render_single(slide, language, audience)
+        jobs.progress("rendering the corrected slide")
+        result = _render_single(slide, language, audience)  # 2nd failure → raise to caller
         bad = _bad(slide, result)
     return slide, result, bad
 
@@ -442,26 +646,33 @@ def _fill_all(ag, items, prompt, language, audience, fixes=None, indices=None):
 
 
 def _failing_indices(result, deck_spec) -> dict:
-    """Map 0-based slide index -> feedback string, from the gate's hard fails
-    (which name 'slide N'), blank-slide detection, and missing-visual detection."""
-    import re
+    """Map 0-based SPEC slide index -> feedback string. Gate hard fails, blank
+    slides, and missing visuals carry RENDERED indices, so they are only used
+    when rendered count == spec count (no splits/drops shifting positions).
+    Compiler-dropped slides carry SPEC indices and are always usable."""
     gate = result["gate_result"]
     fb: dict[int, list[str]] = {}
-    for name, chk in (gate.get("checks") or {}).items():
-        if chk.get("severity") == "hard" and not chk.get("passed"):
-            for item in chk.get("fail_items", []):
-                m = re.search(r"slide (\d+)", item)
-                if m:
-                    fb.setdefault(int(m.group(1)) - 1, []).append(f"[{name}] {item}")
-    a = result["_analysis"]
-    for i in _empty_slides(a):
+    aligned = result["slide_count"] == len(deck_spec.get("slides") or [])
+    if aligned:
+        for name, chk in (gate.get("checks") or {}).items():
+            if chk.get("severity") == "hard" and not chk.get("passed"):
+                for item in chk.get("fail_items", []):
+                    m = re.search(r"slide (\d+)", item)
+                    if m:
+                        fb.setdefault(int(m.group(1)) - 1, []).append(f"[{name}] {item}")
+        a = result["_analysis"]
+        for i in _empty_slides(a):
+            fb.setdefault(i - 1, []).append(
+                "[blank] rendered EMPTY — the content keys were wrong for the intent; "
+                "rebuild with a valid structure (columns_layout for multi-column).")
+        for i in _shortfall_slides(deck_spec, a):
+            fb.setdefault(i - 1, []).append(
+                "[missing visual] a chart/table you specified did NOT render — the data "
+                'shape was wrong. Use chart {type, categories, series:[{name, values}]}.')
+    for i, msg in result.get("_compile_errors") or []:
         fb.setdefault(i - 1, []).append(
-            "[blank] rendered EMPTY — the content keys were wrong for the intent; "
-            "rebuild with a valid structure (columns_layout for multi-column).")
-    for i in _shortfall_slides(deck_spec, a):
-        fb.setdefault(i - 1, []).append(
-            "[missing visual] a chart/table you specified did NOT render — the data "
-            'shape was wrong. Use chart {type, categories, series:[{name, values}]}.')
+            f"[dropped] the slide failed to compile and was DROPPED: {msg}. "
+            "Fix the intent/content structure and return a valid slide.")
     return {i: "\n".join(v) for i, v in fb.items() if i >= 0}
 
 
@@ -469,104 +680,175 @@ def _generate_deck(ag, prompt, storyline, language, audience):
     """Two-stage deck build: storyline → parallel per-slide content → render.
     On failure, rebuild only the failing slides (when indices are mappable) or
     fall back to one whole-deck repair."""
+    jobs.progress("resolving the storyline")
     items, language, audience = _resolve_storyline(ag, prompt, storyline, language, audience)
     if not items:                                    # storyline empty → single shot
+        jobs.progress("drafting the whole deck in one pass")
         spec = ag.call_claude(ag.SYSTEM_GENERATE, f"Brief: {prompt}\n")
         return spec, _render(spec), 1
 
+    jobs.progress(f"writing {len(items)} slides in parallel")
     slides = [s for s in _fill_all(ag, items, prompt, language, audience) if isinstance(s, dict)]
     deck: dict[str, Any] = {"slides": slides}
     if language:
         deck["language"] = language
     if audience:
         deck["audience"] = audience
+
+    # Pre-render intent check: a slide with an unmappable intent would fail the
+    # whole render — rebuild just those slides with explicit feedback instead.
+    _, unknown = _normalize_intents(deck)
+    if unknown:
+        jobs.progress(f"fixing invalid intents on {len(unknown)} slide(s)")
+        fixes = {i - 1: (f"intent {name!r} does not exist. Choose one of: "
+                         + ", ".join(sorted(set(_INTENTS) | set(_MACROS))))
+                 for i, name in unknown if 0 <= i - 1 < len(slides)}
+        fixed = _fill_all(ag, items, prompt, language, audience,
+                          fixes=fixes, indices=list(fixes))
+        for i in fixes:
+            if isinstance(fixed[i], dict):
+                slides[i] = fixed[i]
+        deck["slides"] = slides
+
+    jobs.progress("rendering the deck")
     result = _render(deck)
     attempts = 1
 
-    if result["slide_count"] == len(slides):         # no overflow split → per-slide repair
-        fails = {i: v for i, v in _failing_indices(result, deck).items() if 0 <= i < len(slides)}
-        if fails:
-            print(f"[generate] per-slide repair of slides {sorted(k + 1 for k in fails)}", flush=True)
-            fixed = _fill_all(ag, items, prompt, language, audience,
-                              fixes=fails, indices=list(fails))
-            for i in fails:
-                if isinstance(fixed[i], dict):
-                    slides[i] = fixed[i]
-            deck["slides"] = slides
-            result = _render(deck)
-            attempts = 2
-    else:                                            # split happened → whole-deck repair
+    fails = {i: v for i, v in _failing_indices(result, deck).items() if 0 <= i < len(slides)}
+    if fails:                                        # indices mappable → surgical repair
+        jobs.progress(f"repairing {len(fails)} slide(s)")
+        print(f"[generate] per-slide repair of slides {sorted(k + 1 for k in fails)}", flush=True)
+        fixed = _fill_all(ag, items, prompt, language, audience,
+                          fixes=fails, indices=list(fails))
+        for i in fails:
+            if isinstance(fixed[i], dict):
+                slides[i] = fixed[i]
+        deck["slides"] = slides
+        jobs.progress("re-rendering the repaired deck")
+        result = _render(deck)
+        attempts = 2
+    elif (result["slide_count"] != len(slides)
+          and (not result["gate_result"]["passed"]
+               or _bad_slides(deck, result["_analysis"], result.get("_compile_errors")))):
+        # overflow split shifted indices and something is wrong → whole-deck repair
+        jobs.progress("deck rejected — one whole-deck repair pass (strong model)")
         gate = result["gate_result"]
-        bad = _bad_slides(deck, result["_analysis"])
-        if not gate["passed"] or bad:
-            fb = _gate_feedback(gate)
-            if bad:
-                fb += "\nBLANK / MISSING-VISUAL SLIDES: " + ", ".join(map(str, bad))
-            repair = (f"Brief: {prompt}\n" + (f"language: {language}\n" if language else "")
-                      + "\nYou previously produced this deck:\n"
-                      + json.dumps(deck, ensure_ascii=False)
-                      + "\n\nIt was REJECTED. Fix EVERY item and return the COMPLETE "
-                      "corrected deck_spec:\n" + fb)
-            deck = ag.call_claude(ag.SYSTEM_GENERATE, repair)
-            result = _render(deck)
-            attempts = 2
+        bad = _bad_slides(deck, result["_analysis"], result.get("_compile_errors"))
+        fb = _gate_feedback(gate)
+        if bad:
+            fb += "\nBLANK / MISSING-VISUAL SLIDES: " + ", ".join(map(str, bad))
+        repair = (f"Brief: {prompt}\n" + (f"language: {language}\n" if language else "")
+                  + "\nYou previously produced this deck:\n"
+                  + json.dumps(deck, ensure_ascii=False)
+                  + "\n\nIt was REJECTED. Fix EVERY item and return the COMPLETE "
+                  "corrected deck_spec:\n" + fb)
+        deck = ag.call_claude(ag.SYSTEM_GENERATE, repair)
+        jobs.progress("re-rendering the repaired deck")
+        result = _render(deck)
+        attempts = 2
+    if result["slide_count"] == 0:
+        raise ValueError("the deck rendered with ZERO slides — generation failed; retry")
     return deck, result, attempts
+
+
+class _BadRequest(ValueError):
+    """User-fixable request problem → 400, not 502."""
+
+
+def _agent_impl(ag, req: AgentRequest) -> dict:
+    """The actual /agent work — runs synchronously OR inside a background job."""
+    if req.mode == "storyline":
+        jobs.progress("drafting the storyline")
+        user = f"Brief: {req.prompt}\n"
+        if req.language:
+            user += f"language: {req.language}\n"
+        if req.audience:
+            user += f"audience: {req.audience}\n"
+        return {"storyline": ag.call_claude(ag.SYSTEM_STORYLINE, user, fast=True)}
+
+    if req.mode == "generate":
+        spec, result, attempts = _generate_deck(
+            ag, req.prompt, req.storyline, req.language, req.audience)
+        bad = _bad_slides(spec, result["_analysis"], result.get("_compile_errors"))
+        print(f"[generate] done attempts={attempts} "
+              f"passed={result['gate_result']['passed']} "
+              f"score={result['gate_result']['overall_score']} bad={bad}", flush=True)
+        result.pop("_analysis", None)
+        result.pop("_compile_errors", None)
+        return {"spec": spec, **result, "attempts": attempts, "empty_slides": bad}
+
+    if req.mode == "generate_slide":
+        user = f"Request: {req.prompt}\n"
+        if req.language:
+            user += f"language: {req.language}\n"
+        if req.audience:
+            user += f"audience: {req.audience}\n"
+        slide, result, bad = _one_slide(ag, ag.SYSTEM_GENERATE_SLIDE, user,
+                                        req.language, req.audience)
+        result.pop("_analysis", None)
+        result.pop("_compile_errors", None)
+        return {"spec": slide, **result, "empty_slides": bad}
+
+    if req.mode == "edit_slide":
+        if not req.command:
+            raise _BadRequest("edit_slide requires a command")
+        # Ground truth first: what is ACTUALLY on the slide right now (catches
+        # manual edits made after generation — changed data, pasted charts).
+        inventory = None
+        if req.slide_pptx_base64:
+            jobs.progress("reading the actual slide contents")
+            inventory = _inspect_slide(req.slide_pptx_base64)
+        if not req.slide_spec and inventory is None:
+            raise _BadRequest("edit_slide requires slide_spec and/or a readable "
+                              "slide_pptx_base64 export")
+        user = ""
+        if req.slide_spec:
+            user += f"Stored spec (may be STALE):\n{json.dumps(req.slide_spec, ensure_ascii=False)}\n\n"
+        if inventory is not None:
+            user += ("Actual slide contents RIGHT NOW (ground truth — preserve "
+                     "manual changes):\n"
+                     + json.dumps(inventory, ensure_ascii=False) + "\n\n")
+        user += f"Edit command: {req.command}\n"
+        if req.language:
+            user += f"language: {req.language}\n"
+        if req.audience:
+            user += f"audience: {req.audience}\n"
+        slide, result, bad = _one_slide(ag, ag.SYSTEM_EDIT_SLIDE, user,
+                                        req.language, req.audience)
+        result.pop("_analysis", None)
+        result.pop("_compile_errors", None)
+        return {"spec": slide, **result, "empty_slides": bad}
+
+    raise _BadRequest(f"unknown mode: {req.mode}")
 
 
 @app.post("/agent")
 def agent(req: AgentRequest):
     """Claude-driven generation/edit collapsed into the renderer service (test
-    deployment). Same request/response contract as the Supabase edge function."""
+    deployment). Same request/response contract as the Supabase edge function.
+    With background=true, returns {job_id} immediately — poll /agent/jobs/{id}.
+    This is the reliable path: a full build can outlive the host's HTTP window."""
     try:
         import agent as ag  # lazy import: only /agent needs httpx + the API key
-        if req.mode == "storyline":
-            user = f"Brief: {req.prompt}\n"
-            if req.language:
-                user += f"language: {req.language}\n"
-            if req.audience:
-                user += f"audience: {req.audience}\n"
-            return {"storyline": ag.call_claude(ag.SYSTEM_STORYLINE, user, fast=True)}
-
-        if req.mode == "generate":
-            spec, result, attempts = _generate_deck(
-                ag, req.prompt, req.storyline, req.language, req.audience)
-            bad = _bad_slides(spec, result["_analysis"])
-            print(f"[generate] done attempts={attempts} "
-                  f"passed={result['gate_result']['passed']} "
-                  f"score={result['gate_result']['overall_score']} bad={bad}", flush=True)
-            result.pop("_analysis", None)
-            return {"spec": spec, **result, "attempts": attempts, "empty_slides": bad}
-
-        if req.mode == "generate_slide":
-            user = f"Request: {req.prompt}\n"
-            if req.language:
-                user += f"language: {req.language}\n"
-            if req.audience:
-                user += f"audience: {req.audience}\n"
-            slide, result, bad = _one_slide(ag, ag.SYSTEM_GENERATE_SLIDE, user,
-                                             req.language, req.audience)
-            result.pop("_analysis", None)
-            return {"spec": slide, **result, "empty_slides": bad}
-
-        if req.mode == "edit_slide":
-            if not req.slide_spec or not req.command:
-                return JSONResponse(status_code=400,
-                    content={"error": "edit_slide requires slide_spec and command"})
-            user = (f"Existing slide spec:\n{req.slide_spec}\n\n"
-                    f"Edit command: {req.command}\n")
-            if req.language:
-                user += f"language: {req.language}\n"
-            if req.audience:
-                user += f"audience: {req.audience}\n"
-            slide, result, bad = _one_slide(ag, ag.SYSTEM_EDIT_SLIDE, user,
-                                             req.language, req.audience)
-            result.pop("_analysis", None)
-            return {"spec": slide, **result, "empty_slides": bad}
-
-        return JSONResponse(status_code=400, content={"error": f"unknown mode: {req.mode}"})
+        if req.background:
+            return {"job_id": jobs.submit(lambda: _agent_impl(ag, req))}
+        return _agent_impl(ag, req)
+    except _BadRequest as exc:
+        return JSONResponse(status_code=400, content={"error": str(exc)})
     except Exception as exc:                                  # noqa: BLE001
         import traceback
         traceback.print_exc()                                # surfaces in Render logs
         print(f"[/agent] {type(exc).__name__}: {exc}", flush=True)
         return JSONResponse(status_code=502,
                             content={"error": f"{type(exc).__name__}: {exc}"})
+
+
+@app.get("/agent/jobs/{job_id}")
+def agent_job(job_id: str):
+    """Poll a background job. Cheap + fast — each poll also keeps the free-tier
+    instance awake for the duration of a build."""
+    job = jobs.get(job_id)
+    if job is None:
+        return JSONResponse(status_code=404, content={
+            "error": "unknown job — the service likely restarted mid-build; retry"})
+    return jobs.public_view(job)

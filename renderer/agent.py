@@ -46,12 +46,12 @@ INTENTS (required content keys → shape):
 - show_contents: title, sections:[{title, page?, number?}]  (TOC; number auto 01,02…; one per deck)
 - show_data: title, table {headers:[...], rows:[[...],...]}; conclusion?; footnote?
 - compare_two_options: title, left {bullets|paragraphs}, right {bullets|paragraphs}
-- show_columns: title, columns:[{heading, bullets|paragraphs}]  (2-5 parallel headed columns)
+- show_columns: title, columns:[{heading, icon?, bullets|paragraphs}]  (2-5 parallel headed columns; ADD an icon keyword to EVERY column — default-on)
 - compare: title, compare {pros:[...], cons:[...], pros_heading?, cons_heading?}  (green check / red cross)
-- dashboard: title, metrics:[{value, heading, text?}]   (grid of KPI cards, variadic)
+- dashboard: title, metrics:[{value, heading, text?, icon?}]  (grid of KPI cards, variadic; ADD an icon keyword to EVERY metric — default-on)
 - stat_callout: title, stats:[{value, heading, text}]   (1-4 big-number cards)
 - icon_rows: title, rows:[{icon, heading, text}]        (1-5 rows; icon = short keyword)
-- show_trend_with_key_message: title, chart {type, ...}, insight (text)   (chart + callout)
+- show_trend_with_key_message: title, chart {type, ...}, insight {text, title?}  (chart + colored callout card)
 - show_waterfall: title, waterfall {categories:[...], values:[...], totals:[indices], orientation?:"vertical"|"horizontal", heading?, subheading?}
 - show_treemap: title, treemap {items:[{label, value}], heading?, subheading?}
 - show_timeline: title, milestones:[{date|label, title, text?}]
@@ -60,7 +60,7 @@ INTENTS (required content keys → shape):
 - show_pyramid: title, levels:[{label, text?}]          (label "Head: body" → bold head)
 - show_cycle: title, items:[...]                        (genuine loops only)
 - show_org_chart: title, org_chart {root:{...}, reports:[...]}
-- show_matrix: title, matrix {x_axis:STRING, y_axis:STRING, items:[{row, col, label}]}
+- show_matrix: title, matrix {rows?, cols?, x_axis:STRING, y_axis:STRING, highlight_cell?:[r,c], items:[{label, x:0-1, y:0-1, comment?} | {label, row, col}]}  (any size: 2×2 … 5×5)
 - infographic: title, infographic {type:"funnel"|"gauge"|"venn"|"heatmap", ...}
 - show_quote: quote {text, attribution}                 (pull-quote; NOT for data)
 - introduce_person: name; role?; photo?; bio?
@@ -93,6 +93,55 @@ the geometry, so you never touch grid mechanics.
 
 DO NOT use scatter/XY charts unless explicitly asked (data labels unsupported).
 
+DESIGN SELECTION (ported from the OW design-selection guide — this is what
+makes a deck look like OW work, not a text dump; follow it exactly):
+Start with the message, not the layout. Decision tree per slide:
+- opening/closing/section break → introduce_topic, show_contents,
+  section_divider, show_quote
+- sequence/process/journey/maturity → show_process, show_growing_steps,
+  show_timeline, show_cycle (cycle ONLY for genuine loops)
+- comparing options/categories/plans → compare_two_options, show_data
+  (options table), show_matrix, compare (pros/cons)
+- proving impact with metrics → dashboard / stat_callout (big-number CARDS),
+  show_trend_with_key_message (chart + colored insight callout card),
+  show_waterfall (bridges), show_treemap (shares of a whole)
+- organizing many related topics → show_columns, show_data, explain (numbered)
+- roles/governance/team → show_org_chart
+- emotional/human context → show_quote, section_divider (large statement)
+- too detailed for storytelling → show_data table; split rather than cram
+Slide structure by deck section: situation/context → columns, table, KPI
+infographic; analysis/evidence → big-number comparisons, matrices, option
+tables; recommendation → columns+icons, KPI columns, growing steps, chevrons;
+roadmap → chevrons, timeline, org chart; impact/proof → KPI cards, big-number
+columns; closing → quote or large statement, NEVER a paragraph list.
+Hard rules:
+- Big numbers only when they ARE the story; every number gets a short label.
+- One clear entry point per slide; hierarchy obvious in 3 seconds; parallel
+  structure across columns/steps/options (same pattern, similar length).
+- Icons: default-ON for every show_columns column and dashboard metric. ALL
+  OR NOTHING per slide: if one icon keyword is missing/unresolvable, none
+  render — give EVERY column/metric one. Safe keywords: chart, bar-chart,
+  pie-chart, analytics, growth, trend-up, money, revenue, budget, percentage,
+  user, users, team, customer, handshake, network, target, goal, strategy,
+  compass, roadmap, milestone, rocket, idea, bulb, shield, lock, globe, map,
+  building, factory, store, cloud, database, phone, laptop, ai, automation,
+  leaf, energy, heart, health, star, award, trophy, quality, check, clock,
+  calendar, search, settings, warning, flag, document, folder, mail, truck.
+  Diagram intents (process, pyramid, cycle, growing_steps) have NO icon
+  slots — never add icons there.
+- ADD "conclusion" (one takeaway sentence) to EVERY chart/table/data slide —
+  it renders as a distinct bottom takeaway band and is an OW signature.
+- "sticker" adds an amber circular highlight — use for the single most
+  important number/claim in the deck, at most once or twice.
+- KEY SLIDES (the ones carrying the argument: the core-message slide, one per
+  supporting argument, the close) must LEAD WITH A PRIMARY VISUAL — a chart,
+  KPI cards, a diagram, or a hero stat. A key slide is never text-only.
+- Never more than TWO consecutive text-only slides. A deck of only
+  explain+show_data+summary is REJECTED QUALITY. A good 7-slide deck mixes
+  ≥4 intent families and ≥2 card/chart slides.
+- Density: simpler slides for executive storytelling, denser for analysis. If
+  a slide would be ~3 thin bullets, add a stat/icon/graphic or merge it.
+
 VOICE (enforced by a non-overridable gate — violations block the deck):
 - Action titles: full sentences that state the "so what" (≥4 words, ≤15),
   active voice. NOT topic labels. e.g. "Two suppliers cover 80% of volume",
@@ -120,9 +169,32 @@ write full slide content yet. Return JSON:
 { "title": string, "language": BCP-47, "audience": string,
   "storyline": [ { "intent": <name>, "title": <action-title sentence>,
                    "note": <one line on what this slide will contain> } ] }
-Aim for a tight narrative: cover → (contents if long) → situation →
-complication → evidence (data/chart) → recommendation → summary. 5-9 slides
-unless the brief implies otherwise. Titles must already be action titles."""
+
+STORYLINE LOGIC (ported from the OW storyline system — apply in this order):
+1. Infer the INTENT MODE from the brief: update/status → Inform · proposal/
+   business case → Recommend · approval/options → Decide · stakeholders/
+   rollout → Align · vision/launch → Inspire. Default Inform.
+2. Write the CORE MESSAGE as one sentence (if it needs an "and", split it).
+   LEAD WITH THE ANSWER: the first content slide reveals the recommendation or
+   headline finding — a reader who stops after one minute knows the answer.
+3. Build a PYRAMID: 2-4 mutually distinct supporting arguments, each carried
+   by exactly one slide, evidence beneath. Opening pattern by mode:
+   Recommend/Decide/Inform → answer first, then the case; Align → SCQA
+   (situation-complication-question-answer); Inspire → from-state → to-state
+   → the path, end on a motivating message. Decide MUST state the decision
+   required; Align MUST state next steps and ownership.
+4. The slide titles, read top to bottom on their own, must tell the whole
+   story (headline sequence). Every title is a full action-title sentence.
+5. KEY SLIDES (core message, one per argument, the close) get a VISUAL intent
+   (chart/cards/diagram/hero stat) — never explain. The close is never a
+   paragraph list. Apply the DESIGN SELECTION rules at the outline level.
+6. Long decks with distinct parts: open each part with a section_divider
+   (structural slides are free — they don't count against a requested count).
+7. Match the DECK PROFILE to the brief: results/KPIs/budget → chart- and
+   table-heavy; board/strategy/decision → lean, stat callouts, one idea per
+   slide; vision/launch → hero statements and big stats, light text;
+   otherwise balanced with a visual on most content slides.
+5-9 content slides unless the brief implies otherwise."""
 
 SYSTEM_GENERATE = INTENT_REFERENCE + """
 
@@ -155,13 +227,30 @@ content or clearly illustrative dummy data in the requested language."""
 
 SYSTEM_EDIT_SLIDE = INTENT_REFERENCE + """
 
-TASK: You are given one existing slide spec and an edit command. Make the
-SMALLEST change that satisfies the command and return the COMPLETE updated
-slide object { "intent": <name>, "content": {...} } (NOT wrapped in "slides").
+TASK: You are given an existing slide and an edit command. Make the SMALLEST
+change that satisfies the command and return the COMPLETE updated slide object
+{ "intent": <name>, "content": {...} } (NOT wrapped in "slides").
+
+You may receive TWO descriptions of the slide:
+1. "Stored spec" — the spec it was originally generated from (may be absent
+   for slides created outside the pane).
+2. "Actual slide contents" — an inventory parsed from the LIVE slide right
+   now: all text, tables (with cell values), charts (with type, categories,
+   and series values), and picture counts.
+
+THE ACTUAL SLIDE CONTENTS ARE GROUND TRUTH. The user may have manually edited
+the slide after it was generated (changed numbers, added a chart, pasted
+text). Your updated spec MUST preserve those manual changes — carry the
+actual data, not the stored spec's stale data — unless the edit command
+explicitly overrides them. If an element exists on the slide but not in the
+stored spec (e.g. a second chart), include it in the updated spec (compose or
+columns_layout can host multiple visuals). If there is no stored spec, first
+derive the closest-fitting intent + content from the actual contents, then
+apply the command.
 
 Rules:
-- KEEP the same intent and overall structure. Preserve every field the command
-  does not explicitly touch (titles, other columns, footnotes, data).
+- KEEP the same intent and overall structure where possible. Preserve every
+  field the command does not explicitly touch (titles, columns, footnotes, data).
 - Change the intent ONLY if the command explicitly asks for a different element
   type (e.g. "turn this into a bar chart", "make it a table"). "Add icons",
   "reword", "add a column", "change the numbers" do NOT change the intent.
@@ -221,6 +310,21 @@ def _extract_json(raw: str) -> Any:
     raise ValueError(f"unbalanced JSON in model output: {t[:200]}")
 
 
+# One shared client: connection keep-alive across the ~10 Claude calls a deck
+# build makes (storyline + parallel fills + repairs) saves a TLS handshake per
+# call. httpx.Client is thread-safe; parallel fills share it.
+_client: httpx.Client | None = None
+
+
+def _http() -> httpx.Client:
+    global _client
+    if _client is None:
+        _client = httpx.Client(
+            timeout=120.0,
+            limits=httpx.Limits(max_connections=8, max_keepalive_connections=8))
+    return _client
+
+
 def _messages(system: str, user_text: str, max_tokens: int, thinking: bool,
               model: str) -> str:
     """One Anthropic Messages call; returns the concatenated text blocks.
@@ -241,11 +345,11 @@ def _messages(system: str, user_text: str, max_tokens: int, thinking: bool,
     import time
     last = None
     for attempt in range(4):
-        resp = httpx.post(
+        resp = _http().post(
             "https://api.anthropic.com/v1/messages",
             headers={"content-type": "application/json", "x-api-key": api_key,
                      "anthropic-version": "2023-06-01"},
-            json=payload, timeout=120.0,
+            json=payload,
         )
         if resp.status_code == 200:
             data = resp.json()
