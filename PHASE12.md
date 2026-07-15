@@ -1,5 +1,29 @@
 # Phase 1 (generate) & Phase 2 (slide chat) — build notes
 
+## Stability & quality update (2026-07-15)
+
+- **Background jobs**: `POST /agent {background:true}` → `{job_id}`; pane polls
+  `GET /agent/jobs/{id}` (live stage shown in the status line). No HTTP request
+  outlives the host proxy window anymore — kills the 502/timeout class. Polls
+  double as keep-warm. In-memory store (`renderer/jobs.py`), single instance.
+- **Silent slide drops fixed**: near-miss intents (`quote`, `show_trend`, …)
+  are aliased to registry names; still-unknown intents fail loudly pre-render;
+  compiler "Slide N failed to compile" errors are captured and fed into the
+  per-slide repair loop instead of vanishing. Zero-slide decks are rejected.
+- **Edit reads the LIVE slide first**: the pane exports the selected slide
+  (`exportAsBase64`, PowerPointApi 1.8; graceful fallback) and the backend
+  parses it (texts, tables, charts incl. series values) — manual changes made
+  after generation survive edits; untracked/foreign slides become editable.
+- **Design quality**: DESIGN SELECTION rules added to the system prompts
+  (visual-intent variety, KPI/stat cards, conclusions on data slides, sticker)
+  — closes the gap vs. the custom GPT's card-rich output. A plain-string
+  `insight` is now normalized so the colored callout card always renders.
+- **Office ops hardened**: phased insert (snapshot → insert → idempotent
+  tag/verify → delete-last), one retry on transient errors, tag write-back
+  verification; deck/spec count mismatch is surfaced.
+- **Transport**: shared httpx client (keep-alive) for Claude calls; pane fetch
+  timeouts + one submit retry; keep-warm fires on settings save.
+
 Phase 0 (spike) passed. This delivers the MVP generation loop and the
 selection-aware slide-chat loop.
 
