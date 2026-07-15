@@ -1,5 +1,10 @@
 // Distilled OW deck-authoring instructions for the generation/edit LLM.
 //
+// NOTE (2026-07-15): renderer/agent.py is the CANONICAL prompt source for the
+// test deployment and is now substantially ahead of this file (design
+// selection rules, storyline pyramid logic, icon vocabulary — ported from the
+// GPT package v2.6.21). Re-sync FROM agent.py before reviving this function.
+//
 // This is NOT a paste of the GPT package's 15k-token knowledge base. It is the
 // operative subset, derived from the runtime that actually renders the deck
 // (renderer/src: compiler.py INTENTS, gate.py, voice_lint.py). The runtime is
