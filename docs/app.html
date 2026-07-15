@@ -106,6 +106,7 @@
       formatting: $("formatting").value });
     localStorage.setItem("ow_cfg", JSON.stringify(cfg));
     log("settings saved.");
+    keepWarm();                                  // wake the backend right away
   };
   // Insert formatting: destination theme (no master bloat; start from OW
   // template) vs keep source (OW design travels with each slide, may bloat).
@@ -127,10 +128,11 @@
   function keepWarm() { const u = healthUrl(); if (u) fetch(u).catch(() => {}); }
 
   // ---------- live elapsed-time + stage indicator ("show actions") ----------
-  let _timer = null;
+  let _timer = null, _stageDetail = "";      // _stageDetail: live backend job stage
   async function withTimer(stage, fn) {
     const t0 = Date.now();
-    const tick = () => { $("status").textContent = `⏳ ${stage} … ${Math.round((Date.now() - t0) / 1000)}s`; };
+    const tick = () => { $("status").textContent =
+      `⏳ ${stage}${_stageDetail ? " · " + _stageDetail : ""} … ${Math.round((Date.now() - t0) / 1000)}s`; };
     tick(); _timer = setInterval(tick, 1000);
     try {
       const r = await fn();
@@ -139,24 +141,63 @@
     } catch (e) {
       $("status").textContent = `✕ ${stage} failed after ${((Date.now() - t0) / 1000).toFixed(1)}s`;
       throw e;
-    } finally { clearInterval(_timer); }
+    } finally { clearInterval(_timer); _stageDetail = ""; }
   }
 
   // ---------- backend ----------
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  async function fetchJSON(url, opts = {}, timeoutMs = 45000) {
+    const ac = new AbortController();
+    const t = setTimeout(() => ac.abort(), timeoutMs);
+    try {
+      const res = await fetch(url, { ...opts, signal: ac.signal });
+      let data;
+      try { data = await res.json(); }
+      catch { throw new Error(`backend ${res.status} (non-JSON response — likely cold start; retry)`); }
+      if (!res.ok || data.error) throw new Error(data.error || data.detail || ("backend " + res.status));
+      return data;
+    } catch (e) {
+      throw (e.name === "AbortError") ? new Error(`backend did not answer within ${timeoutMs / 1000}s`) : e;
+    } finally { clearTimeout(t); }
+  }
+  // Submit-and-poll: the backend runs long builds as a background job so no
+  // single HTTP request has to outlive the host's proxy window (the old 502
+  // class). Each cheap poll also keeps the free-tier instance awake. Falls
+  // back transparently to the synchronous contract (Supabase edge function).
   async function callEdge(payload) {
     if (!cfg.edgeUrl) throw new Error("Set the edge function URL in Settings first.");
-    const body = { ...payload, language: cfg.language || undefined, audience: cfg.audience || undefined };
-    const res = await fetch(cfg.edgeUrl, {
-      method: "POST",
+    const body = { ...payload, language: cfg.language || undefined,
+      audience: cfg.audience || undefined, background: true };
+    const opts = { method: "POST",
       headers: { "content-type": "application/json",
         ...(cfg.anonKey ? { "authorization": "Bearer " + cfg.anonKey } : {}) },
-      body: JSON.stringify(body),
-    });
+      body: JSON.stringify(body) };
     let data;
-    try { data = await res.json(); }
-    catch { throw new Error(`backend ${res.status} (non-JSON response — likely cold start; retry)`); }
-    if (!res.ok || data.error) throw new Error(data.error || data.detail || ("backend " + res.status));
-    return data;
+    try { data = await fetchJSON(cfg.edgeUrl, opts, 60000); }
+    catch (e) {                                  // first hit after idle → cold start
+      log("… submit failed (" + e.message + ") — retrying once in 3s");
+      await sleep(3000);
+      data = await fetchJSON(cfg.edgeUrl, opts, 60000);
+    }
+    if (!data.job_id) return data;               // sync backend — done
+    const jobUrl = cfg.edgeUrl.replace(/\/agent\/?$/, "") + "/agent/jobs/" + data.job_id;
+    const t0 = Date.now();
+    let misses = 0;
+    for (;;) {
+      await sleep(2500);
+      if (Date.now() - t0 > 15 * 60 * 1000) throw new Error("gave up after 15 min");
+      let j;
+      try { j = await fetchJSON(jobUrl, {}, 20000); misses = 0; }
+      catch (e) {
+        if (String(e.message).includes("unknown job"))
+          throw new Error("the backend restarted mid-build — please retry");
+        if (++misses >= 8) throw new Error("lost the backend while waiting: " + e.message);
+        continue;                                // transient blip — keep polling
+      }
+      _stageDetail = j.stage || "";
+      if (j.status === "done") return j.result;
+      if (j.status === "error") throw new Error(j.error || "backend job failed");
+    }
   }
   function showGate(el, g) {
     if (!g) { el.innerHTML = ""; return null; }
@@ -178,41 +219,99 @@
     const slides = ctx.presentation.slides; slides.load("items/id"); await ctx.sync();
     return slides.items.map((s) => s.id);
   }
-  // Insert a whole deck at the end and tag each new slide with uuids[i], in ONE
-  // Office round-trip. Returns the new slide ids in presentation order.
+  // Office.js on web/Mac occasionally throws transient errors right after an
+  // insert. Retry ONCE after a short pause — but only around IDEMPOTENT phases
+  // (reads, tag writes). The insert itself is never blind-retried: a retry
+  // after a half-failure would duplicate slides.
+  async function officeRetry(label, fn) {
+    try { return await fn(); }
+    catch (e) {
+      log(`⚠ ${label} hiccuped (${e.message || e}) — retrying once`);
+      await sleep(1200);
+      return await fn();
+    }
+  }
+  async function snapshotIds() {
+    return officeRetry("reading slides", async () => {
+      let ids; await PowerPoint.run(async (ctx) => { ids = await slideIds(ctx); });
+      return new Set(ids);
+    });
+  }
+  // Insert a whole deck at the end, then tag each new slide with uuids[i] in a
+  // separate idempotent phase. Returns the new slide ids in presentation order.
   async function insertDeckTagged(b64, uuids) {
-    let created = [];
-    await PowerPoint.run(async (ctx) => {
-      const before = new Set(await slideIds(ctx));
+    const before = await snapshotIds();
+    await PowerPoint.run(async (ctx) => {          // the one non-retryable step
       ctx.presentation.insertSlidesFromBase64(b64, { formatting: insertFmt() });
       await ctx.sync();
-      created = (await slideIds(ctx)).filter((id) => !before.has(id));
-      created.forEach((id, i) => {
-        if (uuids[i]) ctx.presentation.slides.getItem(id).tags.add("OW_SLIDE_UUID", uuids[i]);
-      });
-      await ctx.sync();
     });
-    return created;
+    return officeRetry("tagging slides", async () => {
+      let created, missing = 0;
+      await PowerPoint.run(async (ctx) => {
+        created = (await slideIds(ctx)).filter((id) => !before.has(id));
+        created.forEach((id, i) => {
+          if (uuids[i]) ctx.presentation.slides.getItem(id).tags.add("OW_SLIDE_UUID", uuids[i]);
+        });
+        await ctx.sync();
+        // verify: re-read the tags we just wrote (a silent tag loss would break
+        // every later edit on these slides)
+        const sl = ctx.presentation.slides;
+        sl.load("items/id,items/tags/key,items/tags/value"); await ctx.sync();
+        const byId = {}; sl.items.forEach((s) => { byId[s.id] =
+          (s.tags.items.find((t) => t.key === "OW_SLIDE_UUID") || {}).value; });
+        missing = created.filter((id, i) => uuids[i] && byId[id] !== uuids[i]).length;
+      });
+      if (missing) throw new Error(missing + " slide tag(s) did not persist");
+      return created;
+    });
   }
-  // Insert ONE slide after afterId (or at end), tag it, and optionally delete
-  // deleteId (regenerate-and-replace) — all in ONE round-trip to shrink the
-  // window where a web crash could leave a half-applied state. Returns new id.
+  // Insert ONE slide after afterId (or at end), tag it, then (optionally)
+  // delete deleteId — regenerate-and-replace. Phased like insertDeckTagged:
+  // the old slide is only deleted AFTER the new one is verified in place.
   async function insertOne(b64, afterId, uuid, deleteId) {
-    let newId = null;
-    await PowerPoint.run(async (ctx) => {
-      const before = new Set(await slideIds(ctx));
+    const before = await snapshotIds();
+    await PowerPoint.run(async (ctx) => {          // the one non-retryable step
       const opts = { formatting: insertFmt() };
       if (afterId) opts.targetSlideId = afterId;
       ctx.presentation.insertSlidesFromBase64(b64, opts);
       await ctx.sync();
-      newId = (await slideIds(ctx)).filter((id) => !before.has(id))[0] || null;
-      if (newId) {
-        ctx.presentation.slides.getItem(newId).tags.add("OW_SLIDE_UUID", uuid);
-        if (deleteId) ctx.presentation.slides.getItem(deleteId).delete();
-      }
-      await ctx.sync();
     });
+    const newId = await officeRetry("tagging the new slide", async () => {
+      let id = null;
+      await PowerPoint.run(async (ctx) => {
+        id = (await slideIds(ctx)).filter((x) => !before.has(x))[0] || null;
+        if (id) {
+          ctx.presentation.slides.getItem(id).tags.add("OW_SLIDE_UUID", uuid);
+          await ctx.sync();
+        }
+      });
+      return id;
+    });
+    if (newId && deleteId) {
+      try {
+        await PowerPoint.run(async (ctx) => {
+          ctx.presentation.slides.getItem(deleteId).delete(); await ctx.sync();
+        });
+      } catch (e) { log("⚠ could not remove the old slide (" + (e.message || e) + ") — delete it manually."); }
+    }
     return newId;
+  }
+  // Read the LIVE slide (with any manual edits) as a 1-slide pptx, so the
+  // backend can treat what's actually on the slide as ground truth.
+  // Requires PowerPointApi 1.8 (exportAsBase64); returns null when unavailable.
+  async function exportSlide(id) {
+    if (!Office.context.requirements.isSetSupported("PowerPointApi", "1.8")) return null;
+    try {
+      let b64 = null;
+      await PowerPoint.run(async (ctx) => {
+        const r = ctx.presentation.slides.getItem(id).exportAsBase64();
+        await ctx.sync(); b64 = r.value;
+      });
+      return b64;
+    } catch (e) {
+      log("⚠ could not read the live slide (" + (e.message || e) + ")");
+      return null;
+    }
   }
   async function getSelected() {
     let out = [];
@@ -251,9 +350,13 @@
   });
 
   $("btnInsertDeck").onclick = guarded(async () => {
+    if (!deckPptx || !deckSpec) return log("no built deck in memory — click Build deck first.");
     const persisted = deckSpec._persisted;
     const uuids = deckSpec.slides.map((_, i) => persisted?.slides?.[i]?.slide_uuid || crypto.randomUUID());
     const created = await withTimer("inserting deck", () => insertDeckTagged(deckPptx, uuids));
+    if (created.length !== deckSpec.slides.length)
+      log(`⚠ ${created.length} slides inserted but the spec has ${deckSpec.slides.length} ` +
+          "(overflow split) — edit tracking for this deck may be off by position.");
     for (let i = 0; i < created.length; i++)
       specStore[uuids[i]] = { spec: deckSpec.slides[i], deck_id: persisted?.deck_id || null };
     saveSpecs();
@@ -274,19 +377,25 @@
     const sel = await getSelected();
     if (!sel.length) return log("select a slide first.");
     const target = sel[0];
-    if (!target.uuid || !specStore[target.uuid])
-      return log("this slide isn't tracked (created outside the pane). Adopting foreign slides is Phase 3.");
-    const rec = specStore[target.uuid];
+    const rec = (target.uuid && specStore[target.uuid]) || null;
+    // Ground truth first: export the LIVE slide so manual changes (edited
+    // numbers, pasted charts) survive the regenerate-and-replace.
+    const live = await withTimer("reading the slide", () => exportSlide(target.id));
+    if (!rec && !live)
+      return log("this slide isn't tracked and live read-back isn't available here (needs PowerPointApi 1.8) — cannot edit it.");
+    if (!live) log("ℹ live read-back unavailable — editing from the stored spec; manual changes on the slide may be lost.");
     const d = await withTimer("editing slide (Claude)", () => callEdge({ mode: "edit_slide",
-      slide_spec: rec.spec, command: cmd, deck_id: rec.deck_id, slide_uuid: target.uuid }));
+      slide_spec: rec ? rec.spec : undefined, command: cmd,
+      deck_id: rec ? rec.deck_id : undefined, slide_uuid: target.uuid,
+      slide_pptx_base64: live || undefined }));
     const ok = showGate($("editGate"), d.gate_result);
     if (!ok) return log("gate FAILED — slide not replaced.");
     if (d.empty_slides?.length) return log("the edited slide came out blank or missing a chart/table you asked for — slide NOT replaced. Rephrase and try again.");
-    // regenerate-and-replace in one round-trip: insert after old, tag, delete old
-    const newId = await withTimer("replacing slide", () => insertOne(d.pptx_base64, target.id, target.uuid, target.id));
+    const uuid = target.uuid || crypto.randomUUID();
+    const newId = await withTimer("replacing slide", () => insertOne(d.pptx_base64, target.id, uuid, target.id));
     if (!newId) return log("insert produced no new slide — old slide kept, nothing changed.");
-    specStore[target.uuid] = { spec: d.spec, deck_id: rec.deck_id }; saveSpecs();
-    log("slide replaced ✓");
+    specStore[uuid] = { spec: d.spec, deck_id: rec ? rec.deck_id : null }; saveSpecs();
+    log("slide replaced ✓" + (rec ? "" : " (previously untracked — now tracked)"));
   });
 
   $("btnCreate").onclick = guarded(async () => {
