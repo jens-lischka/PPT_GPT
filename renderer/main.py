@@ -111,6 +111,7 @@ class AgentRequest(BaseModel):
     audience: str | None = None
     background: bool = False            # True → return {job_id}; poll /agent/jobs/{id}
     slide_pptx_base64: str | None = None  # edit_slide: export of the LIVE slide
+    slide_state: dict[str, Any] | None = None  # shape_ops: live shape inventory
 
 
 # ---------------------------------------------------------------------------
@@ -137,42 +138,54 @@ def _expand_slide(slide: dict) -> dict:
 
 
 def _macro_columns_layout(content: dict) -> dict:
-    """columns_layout → compose grid. Each column becomes a grid column with up
-    to three stacked cells on fixed rows so columns align: heading (row 0), a
-    visual (row 1), body text (row 2)."""
-    cols = content.get("columns") or []
-    cells: list[dict] = []
-    for c, col in enumerate(cols):
-        if not isinstance(col, dict):
-            continue
-        if col.get("heading"):
-            cells.append({"block": "text", "data": {"heading": col["heading"]},
-                          "col": c, "row": 0})
-        # one visual per column (first match wins)
+    """columns_layout → compose. Uses the ROWS form with weighted heights so a
+    heading is a thin band directly above its visual — the old grid form gave
+    the heading a full equal-height row, leaving a huge gap below it. Rows keep
+    columns aligned because every row carries one region per column (empty
+    text placeholders pad columns that lack a heading/body)."""
+    cols = [c for c in (content.get("columns") or []) if isinstance(c, dict)]
+
+    def _visual(col: dict) -> dict | None:
         if col.get("chart"):
-            cells.append({"block": "chart", "data": {"chart": col["chart"]}, "col": c, "row": 1})
-        elif col.get("table"):
-            cells.append({"block": "table", "data": col["table"], "col": c, "row": 1})
-        elif col.get("kpi"):
-            cells.append({"block": "kpi", "data": col["kpi"], "col": c, "row": 1})
-        elif col.get("image"):
-            cells.append({"block": "image", "data": col["image"], "col": c, "row": 1})
-        elif col.get("waterfall"):
-            cells.append({"block": "waterfall", "data": {"waterfall": col["waterfall"]}, "col": c, "row": 1})
-        elif col.get("treemap"):
-            cells.append({"block": "treemap", "data": {"treemap": col["treemap"]}, "col": c, "row": 1})
-        # body text
+            return {"block": "chart", "data": {"chart": col["chart"]}}
+        if col.get("table"):
+            return {"block": "table", "data": col["table"]}
+        if col.get("kpi"):
+            return {"block": "kpi", "data": col["kpi"]}
+        if col.get("image"):
+            return {"block": "image", "data": col["image"]}
+        if col.get("waterfall"):
+            return {"block": "waterfall", "data": {"waterfall": col["waterfall"]}}
+        if col.get("treemap"):
+            return {"block": "treemap", "data": {"treemap": col["treemap"]}}
+        return None
+
+    def _body(col: dict) -> dict:
         if col.get("bullets"):
-            cells.append({"block": "text", "data": {"bullets": col["bullets"]}, "col": c, "row": 2})
-        elif col.get("text"):
+            return {"block": "text", "data": {"bullets": col["bullets"]}}
+        if col.get("text"):
             txt = col["text"]
-            cells.append({"block": "text",
-                          "data": {"paragraphs": [txt] if isinstance(txt, str) else txt},
-                          "col": c, "row": 2})
+            return {"block": "text",
+                    "data": {"paragraphs": [txt] if isinstance(txt, str) else txt}}
+        return {"block": "text", "data": {}}          # alignment placeholder
+
+    has_head = any(c.get("heading") for c in cols)
+    has_body = any(c.get("bullets") or c.get("text") for c in cols)
+    rows: list[dict] = []
+    if has_head:
+        rows.append({"height": 0.13, "regions": [
+            {"block": "text",
+             "data": {"heading": c["heading"]} if c.get("heading") else {}}
+            for c in cols]})
+    rows.append({"height": 0.59 if (has_head or has_body) else 1.0, "regions": [
+        (_visual(c) or {"block": "text", "data": {}}) for c in cols]})
+    if has_body:
+        rows.append({"height": 0.28, "regions": [_body(c) for c in cols]})
+
     new_content: dict[str, Any] = {"title": content.get("title", "")}
     if content.get("footnote"):
         new_content["footnote"] = content["footnote"]
-    new_content["compose"] = {"grid": {"cols": max(1, len(cols)), "cells": cells}}
+    new_content["compose"] = {"rows": rows}
     return {"intent": "compose", "content": new_content}
 
 
@@ -424,10 +437,13 @@ def _slide_requests(slide: dict, kind: str) -> bool:
     except Exception:                                        # noqa: BLE001
         blob = str(slide)
     intent = slide.get("intent") if isinstance(slide, dict) else None
+    # Match the KEY ("chart":), not the bare string — icon values like
+    # "icon": "chart" or prose containing the word must not count as a
+    # requested visual (a false positive here loops the repair pass).
     if kind == "chart":
-        return '"chart"' in blob or intent == "show_trend_with_key_message"
+        return '"chart":' in blob or intent == "show_trend_with_key_message"
     if kind == "table":
-        return '"table"' in blob or intent == "show_data"
+        return '"table":' in blob or intent == "show_data"
     return False
 
 
@@ -755,6 +771,77 @@ class _BadRequest(ValueError):
     """User-fixable request problem → 400, not 502."""
 
 
+# ---------------------------------------------------------------------------
+# shape_ops validation — the model plans, but the server enforces the physics:
+# whitelisted ops, required fields, coordinates clamped to the slide, sane
+# sizes and colors. Invalid ops are dropped (and counted), never "fixed" into
+# something the model didn't say.
+# ---------------------------------------------------------------------------
+_SLIDE_W, _SLIDE_H = 13.334, 7.5
+_HEX = re.compile(r"^[0-9a-fA-F]{6}$")
+_OP_SPECS: dict[str, set[str]] = {          # op -> required fields
+    "move": {"id"}, "fill": {"id", "color"}, "no_fill": {"id"},
+    "line": {"id"}, "no_line": {"id"}, "font": {"id"}, "text": {"id", "text"},
+    "delete": {"id"},
+    "add_textbox": {"text", "left", "top", "width", "height"},
+    "add_shape": {"shape", "left", "top", "width", "height"},
+    "group": {"ids"},
+}
+
+
+def _validate_ops(ops: Any) -> tuple[list[dict], int]:
+    """Return (valid_ops, dropped_count)."""
+    if not isinstance(ops, list):
+        return [], 0
+    out: list[dict] = []
+    dropped = 0
+    for op in ops[:60]:                                       # hard cap
+        if not (isinstance(op, dict) and op.get("op") in _OP_SPECS
+                and _OP_SPECS[op["op"]] <= set(op)):
+            dropped += 1
+            continue
+        o = dict(op)
+        ok = True
+        for k in ("left", "top", "width", "height"):
+            if k in o:
+                try:
+                    v = float(o[k])
+                except (TypeError, ValueError):
+                    ok = False
+                    break
+                lim = _SLIDE_W if k in ("left", "width") else _SLIDE_H
+                o[k] = round(min(max(v, 0.0 if k in ("left", "top") else 0.05),
+                                 lim), 3)
+        for k in ("color", "fill", "line_color", "font_color"):
+            if k in o and not (isinstance(o[k], str) and _HEX.match(o[k].lstrip("#"))):
+                del o[k]
+            elif k in o:
+                o[k] = o[k].lstrip("#").upper()
+        if "size_pt" in o:
+            try:
+                o["size_pt"] = min(max(float(o["size_pt"]), 6.0), 96.0)
+            except (TypeError, ValueError):
+                del o["size_pt"]
+        if "weight_pt" in o:
+            try:
+                o["weight_pt"] = min(max(float(o["weight_pt"]), 0.25), 12.0)
+            except (TypeError, ValueError):
+                del o["weight_pt"]
+        if o["op"] == "add_shape" and o.get("shape") not in (
+                "rectangle", "rounded_rectangle", "oval", "line"):
+            ok = False
+        if o["op"] == "group" and not (isinstance(o.get("ids"), list)
+                                       and len(o["ids"]) >= 2):
+            ok = False
+        if not (_OP_SPECS[o["op"]] <= set(o)):    # required field cleaned away
+            ok = False
+        if ok:
+            out.append(o)
+        else:
+            dropped += 1
+    return out, dropped
+
+
 def _agent_impl(ag, req: AgentRequest) -> dict:
     """The actual /agent work — runs synchronously OR inside a background job."""
     if req.mode == "storyline":
@@ -818,6 +905,25 @@ def _agent_impl(ag, req: AgentRequest) -> dict:
         result.pop("_analysis", None)
         result.pop("_compile_errors", None)
         return {"spec": slide, **result, "empty_slides": bad}
+
+    if req.mode == "shape_ops":
+        if not req.command or not isinstance(req.slide_state, dict):
+            raise _BadRequest("shape_ops requires command and slide_state")
+        jobs.progress("planning shape operations")
+        user = ("Slide inventory:\n"
+                + json.dumps(req.slide_state, ensure_ascii=False)
+                + f"\n\nCommand: {req.command}\n")
+        out = ag.call_claude(ag.SYSTEM_SHAPE_OPS, user, fast=True)
+        if not isinstance(out, dict) or "ops" not in out:
+            jobs.progress("plan unusable — retrying with the strong model")
+            out = ag.call_claude(ag.SYSTEM_SHAPE_OPS, user
+                                 + "\nReturn EXACTLY {\"note\": string, \"ops\": [...]}.",
+                                 fast=False)
+        ops, dropped = _validate_ops(out.get("ops") if isinstance(out, dict) else None)
+        note = (out.get("note") or "") if isinstance(out, dict) else ""
+        if dropped:
+            note = (note + f" ({dropped} invalid op(s) dropped)").strip()
+        return {"ops": ops, "note": note}
 
     raise _BadRequest(f"unknown mode: {req.mode}")
 
