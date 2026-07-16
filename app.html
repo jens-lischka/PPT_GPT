@@ -1,0 +1,575 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>OW Deck Builder</title>
+  <script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
+  <style>
+    body { font-family: "Segoe UI", sans-serif; margin: 0; font-size: 13px; color: #1a1a1a; }
+    header { background: #0a1f2e; color: #fff; padding: 10px 14px; font-weight: 600; }
+    main { padding: 12px 14px; }
+    section { border: 1px solid #e3e0d8; border-radius: 6px; padding: 10px 12px; margin-bottom: 12px; }
+    h4 { margin: 0 0 8px; font-size: 13px; }
+    label { display: block; font-size: 11px; color: #555; margin: 6px 0 2px; }
+    input, textarea, select { width: 100%; box-sizing: border-box; padding: 6px; font: inherit;
+      border: 1px solid #cfcabd; border-radius: 4px; }
+    textarea { height: 60px; resize: vertical; }
+    button { margin: 6px 6px 0 0; padding: 7px 12px; border: 0; border-radius: 4px; cursor: pointer;
+      background: #1f6f8b; color: #fff; font: inherit; }
+    button.secondary { background: #e3e0d8; color: #1a1a1a; }
+    button:disabled { opacity: .45; cursor: not-allowed; }
+    #log { white-space: pre-wrap; background: #f5f4f0; padding: 8px; border-radius: 4px;
+      min-height: 60px; margin-top: 10px; font-size: 12px; max-height: 180px; overflow: auto; }
+    .row { display: flex; gap: 8px; } .row > * { flex: 1; }
+    .gate-pass { color: #2a7a2a; font-weight: 600; } .gate-fail { color: #b02020; font-weight: 600; }
+    .muted { color: #777; font-size: 11px; }
+    ol.storyline { margin: 6px 0; padding-left: 20px; } ol.storyline li { margin-bottom: 4px; }
+    details summary { cursor: pointer; color: #1f6f8b; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <header>OW Deck Builder</header>
+  <main>
+    <details id="cfg"><summary>⚙︎ Settings (backend)</summary>
+      <label>Backend URL — renderer <code>/agent</code> or Supabase edge function</label>
+      <input id="edgeUrl" placeholder="https://ow-renderer-xxxx.onrender.com/agent" />
+      <label>Auth bearer token (only for the Supabase edge function; leave empty for the renderer)</label>
+      <input id="anonKey" placeholder="eyJ… (optional)" />
+      <div class="row">
+        <div><label>Language (BCP-47)</label><input id="language" placeholder="de-DE" /></div>
+        <div><label>Audience</label><input id="audience" placeholder="board" /></div>
+      </div>
+      <label>Design when inserting</label>
+      <select id="formatting">
+        <option value="destination">Match presentation theme — start from ow_default.pptx (recommended, no master bloat)</option>
+        <option value="source">Bring OW design with each slide — works in any presentation (can bloat masters)</option>
+      </select>
+      <button class="secondary" id="saveCfg">Save</button>
+    </details>
+
+    <!-- PHASE 1 -->
+    <section>
+      <h4>Generate a deck</h4>
+      <label>What should the deck be about?</label>
+      <textarea id="prompt" placeholder="e.g. Board update on our supplier consolidation: situation, the numbers, recommendation."></textarea>
+      <button id="btnStoryline">Propose storyline</button>
+      <div id="storylineBox"></div>
+      <button id="btnGenerate" disabled>Build deck</button>
+      <div id="genGate"></div>
+      <button id="btnInsertDeck" disabled>Insert deck</button>
+    </section>
+
+    <!-- PHASE 2 -->
+    <section>
+      <h4>Edit the selected slide</h4>
+      <button class="secondary" id="btnWhich">Which slide is selected?</button>
+      <label>Command</label>
+      <textarea id="cmd" placeholder="e.g. change the data to Q1 actuals; swap to a bar chart; tighten the title."></textarea>
+      <button id="btnEdit">Apply edit</button>
+      <div id="editGate"></div>
+      <hr style="border:none;border-top:1px solid #eee;margin:10px 0" />
+      <label>Create a new slide after the selection</label>
+      <textarea id="newSlide" placeholder="e.g. a four-column slide, each column a KPI card."></textarea>
+      <button id="btnCreate">Create slide here</button>
+      <div id="createGate"></div>
+    </section>
+
+    <!-- SHAPE OPS: direct manipulation of the CURRENT slide (any OW deck) -->
+    <section>
+      <h4>Apply changes to this slide</h4>
+      <p class="muted" style="margin:0 0 6px">Works on any open OW-template presentation —
+        moves/styles the existing shapes instead of regenerating the slide.</p>
+      <label>Command</label>
+      <textarea id="shapeCmd" placeholder="e.g. establish a grid and align everything to it; make the three boxes equal size; fill the selected shapes cream; add a KPI card '+17%' in the right column; group the selected shapes."></textarea>
+      <button id="btnShapeOps">Apply changes</button>
+      <div id="shapeNote" class="muted"></div>
+    </section>
+
+    <div id="status" class="muted"></div>
+    <div id="log">ready.</div>
+  </main>
+
+  <script>
+  // ---------- state ----------
+  const $ = (id) => document.getElementById(id);
+  const log = (m) => { const el = $("log"); el.textContent += "\n" + m; el.scrollTop = el.scrollHeight; };
+  const cfg = {}; let storyline = null, deckSpec = null, deckPptx = null; let busy = false;
+  // Serialize actions: Office edits (insert/tag/delete) must not overlap, or a
+  // second click hits a slide the first already moved/deleted (InvalidArgument).
+  const guarded = (fn) => async () => {
+    if (busy) return log("⏳ busy — wait for the current action to finish.");
+    busy = true;
+    try { await fn(); } catch (e) { log("ERROR " + e); } finally { busy = false; }
+  };
+  const SPEC_KEY = "ow_specs";                     // slide_uuid -> {spec, deck_id}
+  const specStore = JSON.parse(localStorage.getItem(SPEC_KEY) || "{}");
+  const saveSpecs = () => localStorage.setItem(SPEC_KEY, JSON.stringify(specStore));
+
+  function loadCfg() {
+    Object.assign(cfg, JSON.parse(localStorage.getItem("ow_cfg") || "{}"));
+    $("edgeUrl").value = cfg.edgeUrl || ""; $("anonKey").value = cfg.anonKey || "";
+    $("language").value = cfg.language || ""; $("audience").value = cfg.audience || "";
+    $("formatting").value = cfg.formatting || "destination";
+  }
+  $("saveCfg").onclick = () => {
+    Object.assign(cfg, { edgeUrl: $("edgeUrl").value.trim(), anonKey: $("anonKey").value.trim(),
+      language: $("language").value.trim(), audience: $("audience").value.trim(),
+      formatting: $("formatting").value });
+    localStorage.setItem("ow_cfg", JSON.stringify(cfg));
+    log("settings saved.");
+    keepWarm();                                  // wake the backend right away
+  };
+  // Insert formatting: destination theme (no master bloat; start from OW
+  // template) vs keep source (OW design travels with each slide, may bloat).
+  const insertFmt = () => cfg.formatting === "source"
+    ? PowerPoint.InsertSlideFormatting.keepSourceFormatting
+    : PowerPoint.InsertSlideFormatting.useDestinationTheme;
+
+  Office.onReady(() => {
+    loadCfg();
+    const s15 = Office.context.requirements.isSetSupported("PowerPointApi", "1.5");
+    log("ready — host " + Office.context.host + " · PowerPointApi 1.5: " + s15);
+    if (!s15) log("⚠ selection/tags/replace need PowerPointApi 1.5 — some features will be limited.");
+    keepWarm(); setInterval(keepWarm, 240000);     // keep the renderer awake while the pane is open
+  });
+
+  // ---------- keep-warm: ping /healthz so the free-tier cold start (30–50s)
+  // never lands on a real click. Derived from the backend URL. ----------
+  const healthUrl = () => cfg.edgeUrl ? cfg.edgeUrl.replace(/\/agent\/?$/, "/healthz") : null;
+  function keepWarm() { const u = healthUrl(); if (u) fetch(u).catch(() => {}); }
+
+  // ---------- live elapsed-time + stage indicator ("show actions") ----------
+  let _timer = null, _stageDetail = "";      // _stageDetail: live backend job stage
+  async function withTimer(stage, fn) {
+    const t0 = Date.now();
+    const tick = () => { $("status").textContent =
+      `⏳ ${stage}${_stageDetail ? " · " + _stageDetail : ""} … ${Math.round((Date.now() - t0) / 1000)}s`; };
+    tick(); _timer = setInterval(tick, 1000);
+    try {
+      const r = await fn();
+      $("status").textContent = `✓ ${stage} — ${((Date.now() - t0) / 1000).toFixed(1)}s`;
+      return r;
+    } catch (e) {
+      $("status").textContent = `✕ ${stage} failed after ${((Date.now() - t0) / 1000).toFixed(1)}s`;
+      throw e;
+    } finally { clearInterval(_timer); _stageDetail = ""; }
+  }
+
+  // ---------- backend ----------
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  async function fetchJSON(url, opts = {}, timeoutMs = 45000) {
+    const ac = new AbortController();
+    const t = setTimeout(() => ac.abort(), timeoutMs);
+    try {
+      const res = await fetch(url, { ...opts, signal: ac.signal });
+      let data;
+      try { data = await res.json(); }
+      catch { throw new Error(`backend ${res.status} (non-JSON response — likely cold start; retry)`); }
+      if (!res.ok || data.error) throw new Error(data.error || data.detail || ("backend " + res.status));
+      return data;
+    } catch (e) {
+      throw (e.name === "AbortError") ? new Error(`backend did not answer within ${timeoutMs / 1000}s`) : e;
+    } finally { clearTimeout(t); }
+  }
+  // Submit-and-poll: the backend runs long builds as a background job so no
+  // single HTTP request has to outlive the host's proxy window (the old 502
+  // class). Each cheap poll also keeps the free-tier instance awake. Falls
+  // back transparently to the synchronous contract (Supabase edge function).
+  async function callEdge(payload) {
+    if (!cfg.edgeUrl) throw new Error("Set the edge function URL in Settings first.");
+    const body = { ...payload, language: cfg.language || undefined,
+      audience: cfg.audience || undefined, background: true };
+    const opts = { method: "POST",
+      headers: { "content-type": "application/json",
+        ...(cfg.anonKey ? { "authorization": "Bearer " + cfg.anonKey } : {}) },
+      body: JSON.stringify(body) };
+    let data;
+    try { data = await fetchJSON(cfg.edgeUrl, opts, 60000); }
+    catch (e) {                                  // first hit after idle → cold start
+      log("… submit failed (" + e.message + ") — retrying once in 3s");
+      await sleep(3000);
+      data = await fetchJSON(cfg.edgeUrl, opts, 60000);
+    }
+    if (!data.job_id) return data;               // sync backend — done
+    const jobUrl = cfg.edgeUrl.replace(/\/agent\/?$/, "") + "/agent/jobs/" + data.job_id;
+    const t0 = Date.now();
+    let misses = 0;
+    for (;;) {
+      await sleep(2500);
+      if (Date.now() - t0 > 15 * 60 * 1000) throw new Error("gave up after 15 min");
+      let j;
+      try { j = await fetchJSON(jobUrl, {}, 20000); misses = 0; }
+      catch (e) {
+        if (String(e.message).includes("unknown job"))
+          throw new Error("the backend restarted mid-build — please retry");
+        if (++misses >= 8) throw new Error("lost the backend while waiting: " + e.message);
+        continue;                                // transient blip — keep polling
+      }
+      _stageDetail = j.stage || "";
+      if (j.status === "done") return j.result;
+      if (j.status === "error") throw new Error(j.error || "backend job failed");
+    }
+  }
+  function showGate(el, g) {
+    if (!g) { el.innerHTML = ""; return null; }
+    let html = `<p class="${g.passed ? "gate-pass" : "gate-fail"}">gate ${g.passed ? "PASS" : "FAIL"}` +
+      ` · score ${g.overall_score ?? "?"}</p>`;
+    if (!g.passed) {
+      const fails = [];
+      for (const [name, chk] of Object.entries(g.checks || {}))
+        if (chk.severity === "hard" && !chk.passed)
+          (chk.fail_items || []).forEach((i) => fails.push(`${name}: ${i}`));
+      if (fails.length) html += "<ul class='muted'>" + fails.map((f) => `<li>${f}</li>`).join("") + "</ul>";
+    }
+    el.innerHTML = html;
+    return g.passed;
+  }
+
+  // ---------- Office helpers ----------
+  async function slideIds(ctx) {
+    const slides = ctx.presentation.slides; slides.load("items/id"); await ctx.sync();
+    return slides.items.map((s) => s.id);
+  }
+  // Office.js on web/Mac occasionally throws transient errors right after an
+  // insert. Retry ONCE after a short pause — but only around IDEMPOTENT phases
+  // (reads, tag writes). The insert itself is never blind-retried: a retry
+  // after a half-failure would duplicate slides.
+  async function officeRetry(label, fn) {
+    try { return await fn(); }
+    catch (e) {
+      log(`⚠ ${label} hiccuped (${e.message || e}) — retrying once`);
+      await sleep(1200);
+      return await fn();
+    }
+  }
+  async function snapshotIds() {
+    return officeRetry("reading slides", async () => {
+      let ids; await PowerPoint.run(async (ctx) => { ids = await slideIds(ctx); });
+      return new Set(ids);
+    });
+  }
+  // Insert a whole deck at the end, then tag each new slide with uuids[i] in a
+  // separate idempotent phase. Returns the new slide ids in presentation order.
+  async function insertDeckTagged(b64, uuids) {
+    const before = await snapshotIds();
+    await PowerPoint.run(async (ctx) => {          // the one non-retryable step
+      ctx.presentation.insertSlidesFromBase64(b64, { formatting: insertFmt() });
+      await ctx.sync();
+    });
+    return officeRetry("tagging slides", async () => {
+      let created, missing = 0;
+      await PowerPoint.run(async (ctx) => {
+        created = (await slideIds(ctx)).filter((id) => !before.has(id));
+        created.forEach((id, i) => {
+          if (uuids[i]) ctx.presentation.slides.getItem(id).tags.add("OW_SLIDE_UUID", uuids[i]);
+        });
+        await ctx.sync();
+        // verify: re-read the tags we just wrote (a silent tag loss would break
+        // every later edit on these slides)
+        const sl = ctx.presentation.slides;
+        sl.load("items/id,items/tags/key,items/tags/value"); await ctx.sync();
+        const byId = {}; sl.items.forEach((s) => { byId[s.id] =
+          (s.tags.items.find((t) => t.key === "OW_SLIDE_UUID") || {}).value; });
+        missing = created.filter((id, i) => uuids[i] && byId[id] !== uuids[i]).length;
+      });
+      if (missing) throw new Error(missing + " slide tag(s) did not persist");
+      return created;
+    });
+  }
+  // Insert ONE slide after afterId (or at end), tag it, then (optionally)
+  // delete deleteId — regenerate-and-replace. Phased like insertDeckTagged:
+  // the old slide is only deleted AFTER the new one is verified in place.
+  async function insertOne(b64, afterId, uuid, deleteId) {
+    const before = await snapshotIds();
+    await PowerPoint.run(async (ctx) => {          // the one non-retryable step
+      const opts = { formatting: insertFmt() };
+      if (afterId) opts.targetSlideId = afterId;
+      ctx.presentation.insertSlidesFromBase64(b64, opts);
+      await ctx.sync();
+    });
+    const newId = await officeRetry("tagging the new slide", async () => {
+      let id = null;
+      await PowerPoint.run(async (ctx) => {
+        id = (await slideIds(ctx)).filter((x) => !before.has(x))[0] || null;
+        if (id) {
+          ctx.presentation.slides.getItem(id).tags.add("OW_SLIDE_UUID", uuid);
+          await ctx.sync();
+        }
+      });
+      return id;
+    });
+    if (newId && deleteId) {
+      try {
+        await PowerPoint.run(async (ctx) => {
+          ctx.presentation.slides.getItem(deleteId).delete(); await ctx.sync();
+        });
+      } catch (e) { log("⚠ could not remove the old slide (" + (e.message || e) + ") — delete it manually."); }
+    }
+    return newId;
+  }
+  // Read the LIVE slide (with any manual edits) as a 1-slide pptx, so the
+  // backend can treat what's actually on the slide as ground truth.
+  // Requires PowerPointApi 1.8 (exportAsBase64); returns null when unavailable.
+  async function exportSlide(id) {
+    if (!Office.context.requirements.isSetSupported("PowerPointApi", "1.8")) return null;
+    try {
+      let b64 = null;
+      await PowerPoint.run(async (ctx) => {
+        const r = ctx.presentation.slides.getItem(id).exportAsBase64();
+        await ctx.sync(); b64 = r.value;
+      });
+      return b64;
+    } catch (e) {
+      log("⚠ could not read the live slide (" + (e.message || e) + ")");
+      return null;
+    }
+  }
+  async function getSelected() {
+    let out = [];
+    await PowerPoint.run(async (ctx) => {
+      const sel = ctx.presentation.getSelectedSlides();
+      sel.load("items/id,items/index,items/tags/key,items/tags/value"); await ctx.sync();
+      out = sel.items.map((s) => ({ id: s.id, index: s.index,
+        uuid: (s.tags.items.find((t) => t.key === "OW_SLIDE_UUID") || {}).value }));
+    });
+    return out;
+  }
+
+  // ---------- SHAPE OPS: read + mutate the live slide ----------
+  const PT = 72;                                   // Office.js shape geometry is in points
+  const r3 = (pt) => Math.round((pt / PT) * 1000) / 1000;   // points -> inches
+  // Inventory of the current slide: every shape with geometry (inches), text
+  // where readable, and selection flags. This is the ground truth Claude plans on.
+  async function shapeInventory() {
+    let inv = null;
+    await PowerPoint.run(async (ctx) => {
+      const sel = ctx.presentation.getSelectedSlides();
+      sel.load("items/id"); await ctx.sync();
+      if (!sel.items.length) return;
+      const slide = ctx.presentation.slides.getItem(sel.items[0].id);
+      const shapes = slide.shapes;
+      shapes.load("items/id,items/name,items/type,items/left,items/top,items/width,items/height");
+      let selShapes = null;
+      try { selShapes = ctx.presentation.getSelectedShapes(); selShapes.load("items/id"); } catch (e) {}
+      await ctx.sync();
+      const selIds = new Set(((selShapes && selShapes.items) || []).map((s) => s.id));
+      // texts: best-effort batch read (some shape types have no text frame)
+      const texted = [];
+      for (const s of shapes.items) {
+        try { s.textFrame.textRange.load("text"); texted.push(s); } catch (e) {}
+      }
+      try { await ctx.sync(); } catch (e) { texted.length = 0; }
+      const textById = {};
+      for (const s of texted) {
+        try { textById[s.id] = s.textFrame.textRange.text; } catch (e) {}
+      }
+      inv = {
+        slide_id: sel.items[0].id,
+        slide: { width: 13.333, height: 7.5, units: "inches" },
+        shapes: shapes.items.map((s) => {
+          const o = { id: s.id, name: s.name, type: s.type,
+            left: r3(s.left), top: r3(s.top), width: r3(s.width), height: r3(s.height) };
+          const t = (textById[s.id] || "").trim();
+          if (t) o.text = t.slice(0, 300);
+          if (selIds.has(s.id)) o.selected = true;
+          return o;
+        }),
+      };
+    });
+    return inv;
+  }
+  // Execute the validated ops. One sync PER op: a failing op reports itself
+  // instead of aborting the whole batch. Groups run last.
+  async function applyShapeOps(slideId, ops) {
+    const problems = [];
+    let applied = 0;
+    await PowerPoint.run(async (ctx) => {
+      const slide = ctx.presentation.slides.getItem(slideId);
+      const shapes = slide.shapes;
+      shapes.load("items/id"); await ctx.sync();
+      const byId = {}; shapes.items.forEach((s) => { byId[s.id] = s; });
+      const groups = [];
+      for (const op of ops) {
+        try {
+          const sh = op.id ? byId[op.id] : null;
+          if (op.id && !sh) { problems.push(`skip ${op.op}: shape not found`); continue; }
+          switch (op.op) {
+            case "move":
+              if (op.left != null) sh.left = op.left * PT;
+              if (op.top != null) sh.top = op.top * PT;
+              if (op.width != null) sh.width = op.width * PT;
+              if (op.height != null) sh.height = op.height * PT;
+              break;
+            case "fill": sh.fill.setSolidColor(op.color); break;
+            case "no_fill": sh.fill.clear(); break;
+            case "line":
+              if (op.color) sh.lineFormat.color = op.color;
+              if (op.weight_pt != null) sh.lineFormat.weight = op.weight_pt;
+              break;
+            case "no_line": sh.lineFormat.visible = false; break;
+            case "font": {
+              const f = sh.textFrame.textRange.font;
+              if (op.color) f.color = op.color;
+              if (op.size_pt != null) f.size = op.size_pt;
+              if (op.bold != null) f.bold = !!op.bold;
+              break; }
+            case "text": sh.textFrame.textRange.text = op.text; break;
+            case "delete": sh.delete(); break;
+            case "add_textbox": {
+              const tb = shapes.addTextBox(op.text, { left: op.left * PT, top: op.top * PT,
+                width: op.width * PT, height: op.height * PT });
+              const f = tb.textFrame.textRange.font;
+              if (op.size_pt != null) f.size = op.size_pt;
+              if (op.bold != null) f.bold = !!op.bold;
+              if (op.color) f.color = op.color;
+              break; }
+            case "add_shape": {
+              let ns;
+              const box = { left: op.left * PT, top: op.top * PT,
+                width: op.width * PT, height: op.height * PT };
+              if (op.shape === "line") {
+                ns = shapes.addLine(PowerPoint.ConnectorType.straight, box);
+              } else {
+                const kind = { rectangle: PowerPoint.GeometricShapeType.rectangle,
+                  rounded_rectangle: PowerPoint.GeometricShapeType.roundRectangle,
+                  oval: PowerPoint.GeometricShapeType.ellipse }[op.shape];
+                ns = shapes.addGeometricShape(kind, box);
+                if (op.fill) ns.fill.setSolidColor(op.fill); else ns.fill.clear();
+                if (op.line_color) ns.lineFormat.color = op.line_color;
+                else ns.lineFormat.visible = false;
+                if (op.text) {
+                  ns.textFrame.textRange.text = op.text;
+                  const f = ns.textFrame.textRange.font;
+                  f.color = op.font_color || "000F47";
+                  if (op.size_pt != null) f.size = op.size_pt;
+                  if (op.bold != null) f.bold = !!op.bold;
+                }
+              }
+              if (op.shape === "line" && op.line_color) ns.lineFormat.color = op.line_color;
+              break; }
+            case "group": groups.push(op.ids); continue;
+            default: problems.push("skip unknown op " + op.op); continue;
+          }
+          await ctx.sync(); applied++;
+        } catch (e) { problems.push(`✕ ${op.op}: ${e.message || e}`); }
+      }
+      for (const ids of groups) {
+        try {
+          if (typeof shapes.addGroup !== "function")
+            { problems.push("✕ group: not supported by this PowerPoint version"); continue; }
+          const members = ids.map((id) => byId[id]).filter(Boolean);
+          if (members.length < 2) { problems.push("skip group: <2 shapes"); continue; }
+          shapes.addGroup(members); await ctx.sync(); applied++;
+        } catch (e) { problems.push(`✕ group: ${e.message || e}`); }
+      }
+    });
+    return { applied, problems };
+  }
+
+  $("btnShapeOps").onclick = guarded(async () => {
+    const cmd = $("shapeCmd").value.trim(); if (!cmd) return log("describe the change first.");
+    const inv = await withTimer("reading the slide", () => shapeInventory());
+    if (!inv) return log("select a slide first.");
+    if (!inv.shapes.length) return log("this slide has no shapes to work with.");
+    const d = await withTimer("planning changes (Claude)", () => callEdge({
+      mode: "shape_ops", command: cmd,
+      slide_state: { slide: inv.slide, shapes: inv.shapes } }));
+    $("shapeNote").textContent = d.note || "";
+    if (!d.ops || !d.ops.length) return log("no operations returned — " + (d.note || "try rephrasing."));
+    const res = await withTimer(`applying ${d.ops.length} change(s)`, () => applyShapeOps(inv.slide_id, d.ops));
+    res.problems.forEach((p) => log(p));
+    log(`applied ${res.applied}/${d.ops.length} operation(s) ✓` +
+        (res.problems.length ? " — see issues above" : ""));
+  });
+
+  // ---------- PHASE 1 ----------
+  $("btnStoryline").onclick = guarded(async () => {
+    const prompt = $("prompt").value.trim();
+    if (!prompt) return log("enter a brief first.");
+    const d = await withTimer("storyline (Claude)", () => callEdge({ mode: "storyline", prompt }));
+    storyline = d.storyline?.storyline || d.storyline;   // {title,language,audience,storyline:[...]}
+    const items = storyline.storyline || storyline;
+    $("storylineBox").innerHTML = `<p class="muted">${storyline.title || ""} · ${items.length} slides</p>` +
+      "<ol class='storyline'>" + items.map((s) =>
+        `<li><b>${s.intent}</b> — ${s.title}<br><span class="muted">${s.note || ""}</span></li>`).join("") + "</ol>";
+    $("btnGenerate").disabled = false;
+    log("storyline ready — review, then Build deck.");
+  });
+
+  $("btnGenerate").onclick = guarded(async () => {
+    const d = await withTimer("building deck (Claude, slide-by-slide)",
+      () => callEdge({ mode: "generate", storyline: storyline, prompt: $("prompt").value.trim() }));
+    deckSpec = d.spec; deckPptx = d.pptx_base64; deckSpec._persisted = d.persisted || null;
+    const ok = showGate($("genGate"), d.gate_result);
+    $("btnInsertDeck").disabled = !ok;
+    log(`built ${d.slide_count} slides` + (d.attempts > 1 ? ` (after ${d.attempts} attempts)` : "") +
+        ` · ${ok ? "ready to insert" : "gate FAILED — see reasons above; click Build deck to retry"}`);
+    if (d.empty_slides?.length) log(`⚠ slide(s) ${d.empty_slides.join(", ")} rendered blank — rebuild (click Build deck again) before relying on them.`);
+  });
+
+  $("btnInsertDeck").onclick = guarded(async () => {
+    if (!deckPptx || !deckSpec) return log("no built deck in memory — click Build deck first.");
+    const persisted = deckSpec._persisted;
+    const uuids = deckSpec.slides.map((_, i) => persisted?.slides?.[i]?.slide_uuid || crypto.randomUUID());
+    const created = await withTimer("inserting deck", () => insertDeckTagged(deckPptx, uuids));
+    if (created.length !== deckSpec.slides.length)
+      log(`⚠ ${created.length} slides inserted but the spec has ${deckSpec.slides.length} ` +
+          "(overflow split) — edit tracking for this deck may be off by position.");
+    for (let i = 0; i < created.length; i++)
+      specStore[uuids[i]] = { spec: deckSpec.slides[i], deck_id: persisted?.deck_id || null };
+    saveSpecs();
+    log(`inserted & tagged ${created.length} slides.`);
+    $("btnInsertDeck").disabled = true;
+  });
+
+  // ---------- PHASE 2 ----------
+  $("btnWhich").onclick = guarded(async () => {
+    const sel = await getSelected();
+    if (!sel.length) return log("(nothing selected)");
+    sel.forEach((s) => log(`slide index=${s.index} uuid=${s.uuid || "(untracked)"}` +
+      (s.uuid && specStore[s.uuid] ? ` intent=${specStore[s.uuid].spec.intent}` : "")));
+  });
+
+  $("btnEdit").onclick = guarded(async () => {
+    const cmd = $("cmd").value.trim(); if (!cmd) return log("enter an edit command.");
+    const sel = await getSelected();
+    if (!sel.length) return log("select a slide first.");
+    const target = sel[0];
+    const rec = (target.uuid && specStore[target.uuid]) || null;
+    // Ground truth first: export the LIVE slide so manual changes (edited
+    // numbers, pasted charts) survive the regenerate-and-replace.
+    const live = await withTimer("reading the slide", () => exportSlide(target.id));
+    if (!rec && !live)
+      return log("this slide isn't tracked and live read-back isn't available here (needs PowerPointApi 1.8) — cannot edit it.");
+    if (!live) log("ℹ live read-back unavailable — editing from the stored spec; manual changes on the slide may be lost.");
+    const d = await withTimer("editing slide (Claude)", () => callEdge({ mode: "edit_slide",
+      slide_spec: rec ? rec.spec : undefined, command: cmd,
+      deck_id: rec ? rec.deck_id : undefined, slide_uuid: target.uuid,
+      slide_pptx_base64: live || undefined }));
+    const ok = showGate($("editGate"), d.gate_result);
+    if (!ok) return log("gate FAILED — slide not replaced.");
+    if (d.empty_slides?.length) return log("the edited slide came out blank or missing a chart/table you asked for — slide NOT replaced. Rephrase and try again.");
+    const uuid = target.uuid || crypto.randomUUID();
+    const newId = await withTimer("replacing slide", () => insertOne(d.pptx_base64, target.id, uuid, target.id));
+    if (!newId) return log("insert produced no new slide — old slide kept, nothing changed.");
+    specStore[uuid] = { spec: d.spec, deck_id: rec ? rec.deck_id : null }; saveSpecs();
+    log("slide replaced ✓" + (rec ? "" : " (previously untracked — now tracked)"));
+  });
+
+  $("btnCreate").onclick = guarded(async () => {
+    const prompt = $("newSlide").value.trim(); if (!prompt) return log("describe the new slide.");
+    const sel = await getSelected();
+    const after = sel[0]?.id || null;
+    const d = await withTimer("new slide (Claude)", () => callEdge({ mode: "generate_slide", prompt }));
+    const ok = showGate($("createGate"), d.gate_result);
+    if (!ok) return log("gate FAILED — slide not inserted.");
+    if (d.empty_slides?.length) return log("the new slide came out blank or missing a chart/table you asked for — not inserted. Rephrase and try again.");
+    const uuid = crypto.randomUUID();
+    const newId = await withTimer("inserting slide", () => insertOne(d.pptx_base64, after, uuid, null));
+    if (!newId) return log("insert produced no new slide.");
+    specStore[uuid] = { spec: d.spec, deck_id: null }; saveSpecs();
+    log("slide created ✓");
+  });
+  </script>
+</body>
+</html>
