@@ -1,5 +1,23 @@
 # Phase 1 (generate) & Phase 2 (slide chat) — build notes
 
+## Shape ops — apply changes to any live slide (2026-07-16)
+
+New pane section **"Apply changes to this slide"** (`mode: "shape_ops"`):
+direct manipulation of the CURRENT slide's shapes on any OW-template deck —
+no regenerate-and-replace. The pane reads a full shape inventory (id, name,
+type, geometry in inches, text, selection) and sends it with the command;
+Claude (fast model) plans against the OW grid (content area 0.5/1.54/12.333/
+5.06, gutters 0.5/0.25, brand palette) and returns a whitelisted op list
+(move/fill/line/font/text/delete/add_textbox/add_shape/group) that the server
+validates and clamps (`_validate_ops`) and the pane executes op-by-op via
+Office.js (one sync per op — failures report per-op instead of aborting).
+Covered commands: establish/align to a grid, equalize sizes, align/distribute
+selected shapes, recolor with brand colors, add components built from shapes
+(KPI card, insight callout, section label, divider), group. Charts/tables
+still route to 'Apply edit' (server render) by design. Also fixed:
+`columns_layout` heading row consumed a full grid row (huge gap) — now a
+weighted thin band via the compose rows form.
+
 ## Stability & quality update (2026-07-15)
 
 - **Background jobs**: `POST /agent {background:true}` → `{job_id}`; pane polls
