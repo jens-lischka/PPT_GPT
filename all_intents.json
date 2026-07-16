@@ -1,0 +1,860 @@
+{
+ "language": "en-US",
+ "audience": "board",
+ "title": "Intent test deck",
+ "slides": [
+  {
+   "intent": "introduce_topic",
+   "content": {
+    "title": "Intent test deck: every layout the runtime supports",
+    "subtitle": "Fidelity check · runtime v2.6.18 · insert via task pane"
+   }
+  },
+  {
+   "intent": "show_contents",
+   "content": {
+    "title": "The test walks through five capability groups in sequence",
+    "sections": [
+     {
+      "title": "Text and structure",
+      "page": 3
+     },
+     {
+      "title": "Cards and icons",
+      "page": 8
+     },
+     {
+      "title": "Charts and data",
+      "page": 13
+     },
+     {
+      "title": "Diagrams",
+      "page": 19
+     },
+     {
+      "title": "Composites and extras",
+      "page": 26
+     }
+    ]
+   }
+  },
+  {
+   "intent": "section_divider",
+   "content": {
+    "title": "Text and structure",
+    "number": "01"
+   }
+  },
+  {
+   "intent": "explain",
+   "content": {
+    "title": "Plain bullets still carry 60% of consulting slides",
+    "body": {
+     "bullets": [
+      "Each bullet holds one idea and stays under two lines",
+      "Parallel grammar makes the set scannable in seconds",
+      "Specific numbers beat adjectives: 12% churn, not high churn"
+     ]
+    },
+    "conclusion": "Use text slides for argument, visuals for evidence."
+   },
+   "conclusion": "Use text slides for argument, visuals for evidence."
+  },
+  {
+   "intent": "show_columns",
+   "content": {
+    "title": "Three pillars split the work into clear owners",
+    "columns": [
+     {
+      "heading": "Negotiate",
+      "icon": "handshake",
+      "bullets": [
+       "Frame agreements by March",
+       "Fix price tiers for 24 months"
+      ]
+     },
+     {
+      "heading": "Migrate",
+      "icon": "settings",
+      "bullets": [
+       "Wave plan per plant",
+       "Dual supply for 8 weeks"
+      ]
+     },
+     {
+      "heading": "Control",
+      "icon": "chart",
+      "bullets": [
+       "Weekly KPI board",
+       "Defined escalation path"
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "intent": "compare_two_options",
+   "content": {
+    "title": "Build and buy differ most on speed to market",
+    "left": {
+     "heading": "Build in-house",
+     "bullets": [
+      "18 months to first release",
+      "Full control of the roadmap",
+      "Requires 12 new hires"
+     ]
+    },
+    "right": {
+     "heading": "Buy and integrate",
+     "bullets": [
+      "Live in 5 months",
+      "Vendor sets release cadence",
+      "No permanent headcount added"
+     ]
+    }
+   }
+  },
+  {
+   "intent": "compare",
+   "content": {
+    "title": "The pilot results argue clearly for a rollout",
+    "compare": {
+     "pros_heading": "What worked",
+     "cons_heading": "What did not",
+     "pros": [
+      "Cycle time fell 22% in eight weeks",
+      "Error rate halved without added staff",
+      "Teams adopted the tool unprompted"
+     ],
+     "cons": [
+      "Legacy interface needs manual re-keying",
+      "Training took twice the planned time"
+     ]
+    }
+   }
+  },
+  {
+   "intent": "section_divider",
+   "content": {
+    "title": "Cards and icons",
+    "number": "02"
+   }
+  },
+  {
+   "intent": "dashboard",
+   "content": {
+    "title": "All four headline KPIs moved the right way in Q2",
+    "metrics": [
+     {
+      "value": "+12%",
+      "heading": "Revenue",
+      "text": "vs. plan",
+      "icon": "revenue"
+     },
+     {
+      "value": "38%",
+      "heading": "Gross margin",
+      "text": "+2.1 pts YoY",
+      "icon": "percentage"
+     },
+     {
+      "value": "92",
+      "heading": "NPS",
+      "text": "record high",
+      "icon": "star"
+     },
+     {
+      "value": "4.2 d",
+      "heading": "Lead time",
+      "text": "from 6.8 days",
+      "icon": "clock"
+     }
+    ],
+    "footnote": "Source: Q2 management report"
+   },
+   "footnote": "Source: Q2 management report"
+  },
+  {
+   "intent": "stat_callout",
+   "content": {
+    "title": "Three numbers make the case for consolidation",
+    "stats": [
+     {
+      "value": "80%",
+      "heading": "Volume coverage",
+      "text": "with only two suppliers"
+     },
+     {
+      "value": "$2.4m",
+      "heading": "Savings p.a.",
+      "text": "at full run rate"
+     },
+     {
+      "value": "9 to 2",
+      "heading": "Supplier count",
+      "text": "in two waves"
+     }
+    ],
+    "footnote": "Source: procurement analysis Q2"
+   },
+   "footnote": "Source: procurement analysis Q2"
+  },
+  {
+   "intent": "icon_rows",
+   "content": {
+    "title": "Four safeguards keep the migration on track",
+    "rows": [
+     {
+      "icon": "shield",
+      "heading": "Risk review",
+      "text": "Fortnightly review of the top ten risks with owners"
+     },
+     {
+      "icon": "users",
+      "heading": "Change network",
+      "text": "One trained champion per affected team"
+     },
+     {
+      "icon": "gauge",
+      "heading": "Service floor",
+      "text": "Hard stop if service level drops below 97%"
+     },
+     {
+      "icon": "calendar",
+      "heading": "Wave gates",
+      "text": "Each wave needs a signed gate review to start"
+     }
+    ]
+   }
+  },
+  {
+   "intent": "sticker",
+   "content": {
+    "title": "One number decides this business case",
+    "sticker": {
+     "text": "$2.4m savings per year",
+     "note": "Full effect from 2027 after legacy contracts expire"
+    }
+   }
+  },
+  {
+   "intent": "section_divider",
+   "content": {
+    "title": "Charts and data",
+    "number": "03"
+   }
+  },
+  {
+   "intent": "show_data",
+   "content": {
+    "title": "Two suppliers beat the field on every criterion",
+    "table": {
+     "headers": [
+      "Criterion",
+      "Supplier A",
+      "Supplier B",
+      "Field average"
+     ],
+     "rows": [
+      [
+       "Unit price",
+       "$8.20",
+       "$8.45",
+       "$9.60"
+      ],
+      [
+       "Defect rate",
+       "0.4%",
+       "0.6%",
+       "1.8%"
+      ],
+      [
+       "Lead time",
+       "5 d",
+       "6 d",
+       "11 d"
+      ],
+      [
+       "Capacity headroom",
+       "35%",
+       "28%",
+       "12%"
+      ]
+     ]
+    },
+    "conclusion": "Award both framework contracts in Q3.",
+    "footnote": "Source: RFP evaluation, June"
+   },
+   "conclusion": "Award both framework contracts in Q3.",
+   "footnote": "Source: RFP evaluation, June"
+  },
+  {
+   "intent": "show_trend_with_key_message",
+   "content": {
+    "title": "Savings reach $2.4m in the second year",
+    "chart": {
+     "type": "column",
+     "categories": [
+      "2026",
+      "2027",
+      "2028"
+     ],
+     "series": [
+      {
+       "name": "Savings $m",
+       "values": [
+        0.8,
+        2.4,
+        2.6
+       ]
+      }
+     ]
+    },
+    "insight": {
+     "title": "Why it steps up",
+     "text": "The full effect starts when legacy contracts expire at the end of 2026."
+    },
+    "footnote": "Source: business case v3"
+   },
+   "footnote": "Source: business case v3"
+  },
+  {
+   "intent": "show_waterfall",
+   "content": {
+    "title": "Price and volume add $3.1m before headwinds",
+    "waterfall": {
+     "orientation": "vertical",
+     "heading": "EBIT bridge 2026",
+     "subheading": "$m",
+     "categories": [
+      "EBIT 2025",
+      "Price",
+      "Volume",
+      "Input costs",
+      "FX",
+      "EBIT 2026"
+     ],
+     "values": [
+      12.0,
+      1.8,
+      1.3,
+      -0.9,
+      -0.4,
+      13.8
+     ],
+     "totals": [
+      0,
+      5
+     ]
+    },
+    "footnote": "Source: controlling, plan v2"
+   },
+   "footnote": "Source: controlling, plan v2"
+  },
+  {
+   "intent": "show_treemap",
+   "content": {
+    "title": "Two categories hold 63% of addressable spend",
+    "treemap": {
+     "heading": "Spend by category",
+     "subheading": "$m, 2025",
+     "items": [
+      {
+       "label": "Raw materials",
+       "value": 34
+      },
+      {
+       "label": "Logistics",
+       "value": 21
+      },
+      {
+       "label": "Packaging",
+       "value": 12
+      },
+      {
+       "label": "MRO",
+       "value": 9
+      },
+      {
+       "label": "Services",
+       "value": 8
+      },
+      {
+       "label": "Other",
+       "value": 4
+      }
+     ]
+    },
+    "footnote": "Source: spend cube 2025"
+   },
+   "footnote": "Source: spend cube 2025"
+  },
+  {
+   "intent": "infographic",
+   "content": {
+    "title": "The funnel loses most volume at qualification",
+    "infographic": {
+     "type": "funnel",
+     "stages": [
+      {
+       "label": "Leads",
+       "value": 1200
+      },
+      {
+       "label": "Qualified",
+       "value": 420
+      },
+      {
+       "label": "Proposals",
+       "value": 180
+      },
+      {
+       "label": "Won",
+       "value": 66
+      }
+     ]
+    },
+    "footnote": "Source: CRM export, H1"
+   },
+   "footnote": "Source: CRM export, H1"
+  },
+  {
+   "intent": "section_divider",
+   "content": {
+    "title": "Diagrams",
+    "number": "04"
+   }
+  },
+  {
+   "intent": "show_timeline",
+   "content": {
+    "title": "Six milestones take the program to full run rate",
+    "milestones": [
+     {
+      "date": "Q3 26",
+      "title": "Contracts signed",
+      "description": "Both framework agreements executed"
+     },
+     {
+      "date": "Q4 26",
+      "title": "Wave 1 live",
+      "description": "Two plants migrated"
+     },
+     {
+      "date": "Q1 27",
+      "title": "Wave 2 live",
+      "description": "Remaining plants migrated"
+     },
+     {
+      "date": "Q2 27",
+      "title": "Legacy exit",
+      "description": "Old contracts terminated"
+     },
+     {
+      "date": "Q3 27",
+      "title": "Full run rate",
+      "description": "$2.4m annualized savings"
+     },
+     {
+      "date": "Q4 27",
+      "title": "Review",
+      "description": "Renegotiation checkpoint"
+     }
+    ]
+   }
+  },
+  {
+   "intent": "show_process",
+   "content": {
+    "title": "Four gates move each wave from plan to done",
+    "steps": [
+     {
+      "label": "Prepare",
+      "heading": "Prepare",
+      "bullets": [
+       "Baseline volumes",
+       "Agree wave scope"
+      ]
+     },
+     {
+      "label": "Pilot",
+      "heading": "Pilot",
+      "bullets": [
+       "Dual supply",
+       "Track defect rate"
+      ]
+     },
+     {
+      "label": "Switch",
+      "heading": "Switch",
+      "bullets": [
+       "Cut over orders",
+       "Monitor daily"
+      ]
+     },
+     {
+      "label": "Close",
+      "heading": "Close",
+      "bullets": [
+       "Confirm savings",
+       "Sign gate review"
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "intent": "show_growing_steps",
+   "content": {
+    "title": "Maturity climbs from ad hoc to managed in five steps",
+    "steps": [
+     {
+      "title": "Ad hoc",
+      "text": "No standard process"
+     },
+     {
+      "title": "Repeatable",
+      "text": "Playbooks exist"
+     },
+     {
+      "title": "Defined",
+      "text": "Roles and KPIs set"
+     },
+     {
+      "title": "Measured",
+      "text": "Weekly steering"
+     },
+     {
+      "title": "Managed",
+      "text": "Continuous review"
+     }
+    ]
+   }
+  },
+  {
+   "intent": "show_pyramid",
+   "content": {
+    "title": "Three layers carry the target operating model",
+    "levels": [
+     {
+      "label": "Steer: one monthly decision forum"
+     },
+     {
+      "label": "Manage: category leads own supplier P&L"
+     },
+     {
+      "label": "Operate: shared service handles transactions"
+     }
+    ]
+   }
+  },
+  {
+   "intent": "show_cycle",
+   "content": {
+    "title": "The review loop repeats every quarter without exception",
+    "items": [
+     {
+      "label": "Measure"
+     },
+     {
+      "label": "Analyze"
+     },
+     {
+      "label": "Decide"
+     },
+     {
+      "label": "Execute"
+     }
+    ]
+   }
+  },
+  {
+   "intent": "show_org_chart",
+   "content": {
+    "title": "A lean program team reports to the COO",
+    "org_chart": {
+     "root": {
+      "name": "COO",
+      "role": "Sponsor"
+     },
+     "reports": [
+      {
+       "name": "Program lead",
+       "role": "Full-time"
+      },
+      {
+       "name": "Category lead A",
+       "role": "Raw materials"
+      },
+      {
+       "name": "Category lead B",
+       "role": "Logistics"
+      },
+      {
+       "name": "PMO",
+       "role": "Part-time"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "intent": "show_matrix",
+   "content": {
+    "title": "Two moves sit in the high-impact low-effort corner",
+    "matrix": {
+     "rows": 2,
+     "cols": 2,
+     "x_axis": "Effort",
+     "y_axis": "Impact",
+     "highlight_cell": [
+      0,
+      0
+     ],
+     "items": [
+      {
+       "label": "Consolidate suppliers",
+       "x": 0.25,
+       "y": 0.85,
+       "comment": "do first"
+      },
+      {
+       "label": "Renegotiate freight",
+       "x": 0.3,
+       "y": 0.7
+      },
+      {
+       "label": "New ERP module",
+       "x": 0.85,
+       "y": 0.75
+      },
+      {
+       "label": "Reorder points",
+       "x": 0.2,
+       "y": 0.3
+      }
+     ]
+    }
+   }
+  },
+  {
+   "intent": "section_divider",
+   "content": {
+    "title": "Composites and extras",
+    "number": "05"
+   }
+  },
+  {
+   "intent": "show_graphic_with_text",
+   "content": {
+    "title": "The wave plan pairs a process with its rationale",
+    "panel": {
+     "side": "graphic_left",
+     "graphic": {
+      "kind": "process",
+      "steps": [
+       {
+        "label": "Prepare"
+       },
+       {
+        "label": "Pilot"
+       },
+       {
+        "label": "Switch"
+       },
+       {
+        "label": "Close"
+       }
+      ]
+     },
+     "text": {
+      "heading": "Why waves",
+      "bullets": [
+       "Limits supply risk to one plant at a time",
+       "Each gate review feeds fixes into the next wave",
+       "Savings start before the program ends"
+      ]
+     }
+    }
+   }
+  },
+  {
+   "intent": "columns_layout",
+   "content": {
+    "title": "One slide combines a chart, a KPI, and a table",
+    "footnote": "Source: illustrative test data",
+    "columns": [
+     {
+      "heading": "Trend",
+      "chart": {
+       "type": "line",
+       "categories": [
+        "Q1",
+        "Q2",
+        "Q3",
+        "Q4"
+       ],
+       "series": [
+        {
+         "name": "Index",
+         "values": [
+          100,
+          104,
+          109,
+          117
+         ]
+        }
+       ]
+      },
+      "text": "Steady climb through the year."
+     },
+     {
+      "heading": "Headline",
+      "kpi": {
+       "value": "+17%",
+       "label": "vs. prior year"
+      },
+      "text": "Growth beat the plan."
+     },
+     {
+      "heading": "Detail",
+      "table": {
+       "headers": [
+        "Region",
+        "Growth"
+       ],
+       "rows": [
+        [
+         "North",
+         "+21%"
+        ],
+        [
+         "South",
+         "+9%"
+        ]
+       ]
+      },
+      "text": "North drives the gain."
+     }
+    ]
+   }
+  },
+  {
+   "intent": "compose",
+   "content": {
+    "title": "Open composition places any block on a grid",
+    "footnote": "Source: illustrative test data",
+    "compose": {
+     "rows": [
+      {
+       "regions": [
+        {
+         "block": "text",
+         "data": {
+          "heading": "Reading guide",
+          "bullets": [
+           "Left: gauge shows capacity use",
+           "Right: heatmap shows load by site and shift"
+          ]
+         },
+         "width": 0.34
+        },
+        {
+         "block": "infographic",
+         "data": {
+          "infographic": {
+           "type": "gauge",
+           "value": 78,
+           "label": "Capacity use",
+           "suffix": "%"
+          }
+         },
+         "width": 0.3
+        },
+        {
+         "block": "infographic",
+         "data": {
+          "infographic": {
+           "type": "heatmap",
+           "values": [
+            [
+             3,
+             1,
+             2
+            ],
+            [
+             2,
+             3,
+             1
+            ],
+            [
+             1,
+             2,
+             3
+            ]
+           ],
+           "x_labels": [
+            "Early",
+            "Late",
+            "Night"
+           ],
+           "y_labels": [
+            "Site A",
+            "Site B",
+            "Site C"
+           ]
+          }
+         },
+         "width": 0.36
+        }
+       ]
+      }
+     ]
+    }
+   },
+   "footnote": "Source: illustrative test data"
+  },
+  {
+   "intent": "show_quote",
+   "content": {
+    "quote": {
+     "text": "The consolidation paid for itself before the second wave even started.",
+     "attribution": {
+      "name": "J. Example",
+      "title": "COO",
+      "location": "Frankfurt"
+     }
+    }
+   }
+  },
+  {
+   "intent": "introduce_person",
+   "content": {
+    "name": "Jane Example",
+    "role": "Program lead",
+    "bio": {
+     "heading": "Background",
+     "bullets": [
+      "Led three plant migrations since 2022",
+      "Ten years in procurement"
+     ]
+    }
+   }
+  },
+  {
+   "intent": "summary",
+   "content": {
+    "title": "Approve the two framework contracts to lock in $2.4m",
+    "body": {
+     "bullets": [
+      "Award suppliers A and B in Q3 as recommended",
+      "Start wave 1 in Q4 with the defined gate reviews",
+      "Report savings against the bridge every quarter"
+     ]
+    },
+    "conclusion": "Decision requested: sign-off on both contracts today."
+   },
+   "conclusion": "Decision requested: sign-off on both contracts today."
+  }
+ ]
+}
